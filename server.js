@@ -2,20 +2,36 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middleware para capturar datos en bruto
+// Middleware para capturar cualquier tipo de dato
 app.use(express.raw({ type: '*/*' }));
 
-// Ruta para recibir datos
-app.post('/receive_data', (req, res) => {
+// Manejar cualquier tipo de solicitud
+app.all('/receive_data', (req, res) => {
+    const method = req.method; // Método HTTP (GET, POST, etc.)
+    const headers = req.headers; // Cabeceras de la solicitud
     const rawData = req.body; // Datos en bruto
-    const contentType = req.headers['content-type']; // Tipo de contenido
-    const timestamp = new Date().toISOString();
+    const contentType = headers['content-type']; // Tipo de contenido
 
-    // Mostrar los datos en los logs
-    console.log(`[${timestamp}] Datos recibidos (${contentType}):`, rawData.toString('utf8'));
+    // Mostrar información de la solicitud en los logs
+    console.log(`[${new Date().toISOString()}] Solicitud recibida:`);
+    console.log(`- Método: ${method}`);
+    console.log(`- Cabeceras:`, headers);
+    console.log(`- Tipo de contenido: ${contentType}`);
+    console.log(`- Datos en bruto:`, rawData.toString('utf8'));
 
-    // Responder al dispositivo
-    res.json({ status: "success", message: "Datos recibidos correctamente" });
+    // Responder al cliente
+    res.json({
+        status: "success",
+        message: "Solicitud recibida correctamente",
+        method: method,
+        headers: headers,
+        data: rawData.toString('utf8') // Mostrar los datos en la respuesta
+    });
+});
+
+// Ruta de prueba
+app.get('/', (req, res) => {
+    res.send('Servidor funcionando correctamente');
 });
 
 // Iniciar el servidor
