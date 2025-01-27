@@ -1,28 +1,24 @@
 const express = require('express');
 const app = express();
-const port = process.env.PORT || 3000; // Usar el puerto de Render o 3000 localmente
+const port = process.env.PORT || 3000;
 
-// Middleware para parsear JSON
-app.use(express.json());
+// Middleware para capturar datos en bruto
+app.use(express.raw({ type: '*/*' }));
 
 // Ruta para recibir datos
 app.post('/receive_data', (req, res) => {
-    const data = req.body; // Los datos enviados por el dispositivo
-    const timestamp = new Date().toISOString(); // Agregar timestamp
+    const rawData = req.body; // Datos en bruto
+    const contentType = req.headers['content-type']; // Tipo de contenido
+    const timestamp = new Date().toISOString();
 
-    // Logs mejorados
-    console.log(`[${timestamp}] Datos recibidos:`, JSON.stringify(data, null, 2));
+    // Mostrar los datos en los logs
+    console.log(`[${timestamp}] Datos recibidos (${contentType}):`, rawData.toString('utf8'));
 
     // Responder al dispositivo
     res.json({ status: "success", message: "Datos recibidos correctamente" });
 });
 
-// Ruta de prueba
-app.get('/', (req, res) => {
-    res.send('Servidor funcionando correctamente');
-});
-
 // Iniciar el servidor
 app.listen(port, () => {
-    console.log(`[${new Date().toISOString()}] Servidor escuchando en el puerto ${port}`);
+    console.log(`Servidor escuchando en http://localhost:${port}`);
 });
