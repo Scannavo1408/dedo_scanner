@@ -2,27 +2,16 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Middleware para capturar datos sin procesar
 app.use(express.raw({ type: '*/*' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Ruta para autenticación del reloj
-app.get('/iclock/accounts/login/', (req, res) => {
-    console.log("📡 Dispositivo intentando iniciar sesión...");
-    res.status(200).send("OK");
-});
-
-// Ruta para recibir datos de asistencia
-app.post('/iclock/data/upload', (req, res) => {
-    console.log("📡 Datos recibidos desde el F22:");
-    console.log(req.body.toString('utf8'));
-    res.status(200).send("OK");
-});
-
-// Ruta para la inicialización y sincronización del dispositivo
+// Ruta de inicialización del dispositivo
 app.get('/iclock/cdata', (req, res) => {
     const serialNumber = req.query.SN || "Unknown";
     console.log(`🔄 Inicialización del dispositivo: ${serialNumber}`);
+    console.log("🔍 Parámetros recibidos:", req.query);
 
     res.status(200).send(
         `GET OPTION FROM: ${serialNumber}\n` +
@@ -40,7 +29,21 @@ app.get('/iclock/cdata', (req, res) => {
     );
 });
 
-// Servidor corriendo
+// Ruta para recibir datos de asistencia
+app.post('/iclock/data/upload', (req, res) => {
+    console.log("📡 Recibido desde F22 - Datos en bruto:");
+    console.log(req.body.toString('utf8'));  // Muestra los datos exactos que llegan
+
+    res.status(200).send("OK");
+});
+
+// Ruta de autenticación
+app.get('/iclock/accounts/login/', (req, res) => {
+    console.log("📡 Dispositivo intentando iniciar sesión:", req.query);
+    res.status(200).send("OK");
+});
+
+// Iniciar el servidor
 app.listen(port, () => {
     console.log(`🚀 Servidor escuchando en https://dedo-scanner.onrender.com`);
 });
