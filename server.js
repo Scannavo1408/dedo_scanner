@@ -29,6 +29,13 @@ app.get('/iclock/cdata', (req, res) => {
     );
 });
 
+app.post('/iclock/cdata', (req, res) => {
+    console.log("📡 Recibido desde F22 - Datos de asistencia:");
+    console.log(req.body.toString('utf8'));  // Mostrar datos exactos que llegan
+
+    res.status(200).send("OK");
+});
+
 // Ruta para recibir datos de asistencia
 app.post('/iclock/data/upload', (req, res) => {
     console.log("📡 Recibido desde F22 - Datos en bruto:");
