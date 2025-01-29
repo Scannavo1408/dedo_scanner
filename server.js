@@ -4,28 +4,65 @@ const port = process.env.PORT || 3000;
 
 // Middleware para capturar cualquier tipo de dato
 app.use(express.raw({ type: '*/*' }));
+app.use(express.json()); // Para JSON
+app.use(express.urlencoded({ extended: true })); // Para datos de formularios
 
-// Manejar cualquier tipo de solicitud
-app.all('/receive_data', (req, res) => {
-    const method = req.method; // Método HTTP (GET, POST, etc.)
-    const headers = req.headers; // Cabeceras de la solicitud
-    const rawData = req.body; // Datos en bruto
-    const contentType = headers['content-type']; // Tipo de contenido
+// Ruta para recibir datos en /iclock/data/upload
+app.all('/iclock/data/upload', (req, res) => {
+    const method = req.method;
+    const headers = req.headers;
+    const rawData = req.body;
+    const contentType = headers['content-type'];
 
-    // Mostrar información de la solicitud en los logs
-    console.log(`[${new Date().toISOString()}] Solicitud recibida:`);
+    console.log(`[${new Date().toISOString()}] /iclock/data/upload`);
     console.log(`- Método: ${method}`);
     console.log(`- Cabeceras:`, headers);
     console.log(`- Tipo de contenido: ${contentType}`);
     console.log(`- Datos en bruto:`, rawData.toString('utf8'));
 
-    // Responder al cliente
+    res.json({
+        status: "success",
+        message: "Datos recibidos en /iclock/data/upload",
+        method: method,
+        headers: headers,
+        data: rawData.toString('utf8')
+    });
+});
+
+// Ruta para manejar login en /iclock/accounts/login
+app.post('/iclock/accounts/login', (req, res) => {
+    const { username, password } = req.body;
+
+    console.log(`[${new Date().toISOString()}] /iclock/accounts/login`);
+    console.log(`- Usuario: ${username}`);
+    console.log(`- Contraseña: ${password}`);
+
+    if (username === 'admin' && password === '1234') {
+        res.json({ status: "success", message: "Login exitoso", user: username });
+    } else {
+        res.status(401).json({ status: "error", message: "Credenciales incorrectas" });
+    }
+});
+
+// Ruta para recibir cualquier tipo de solicitud en /receive_data
+app.all('/receive_data', (req, res) => {
+    const method = req.method;
+    const headers = req.headers;
+    const rawData = req.body;
+    const contentType = headers['content-type'];
+
+    console.log(`[${new Date().toISOString()}] /receive_data`);
+    console.log(`- Método: ${method}`);
+    console.log(`- Cabeceras:`, headers);
+    console.log(`- Tipo de contenido: ${contentType}`);
+    console.log(`- Datos en bruto:`, rawData.toString('utf8'));
+
     res.json({
         status: "success",
         message: "Solicitud recibida correctamente",
         method: method,
         headers: headers,
-        data: rawData.toString('utf8') // Mostrar los datos en la respuesta
+        data: rawData.toString('utf8')
     });
 });
 
@@ -38,3 +75,4 @@ app.get('/', (req, res) => {
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://localhost:${port}`);
 });
+
