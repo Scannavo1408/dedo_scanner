@@ -1,122 +1,139 @@
+
 // server.js
 const express = require('express');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Middlewares generales
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+/**
+ * Cola de comandos en memoria:
+ * Estructura sugerida: {
+ *   "0316144680030": [ "C:1:DATA UPDATE USERINFO ...", "C:2:..." ],
+ *   "Otro_SN": [ "..." ]
+ * }
+ */
+const commandsQueue = {};
+
+/**
+ * Middleware para parsear JSON en las rutas que sí esperen JSON (ej. para administrar comandos).
+ * Usaremos express.json() solo en rutas específicas, no globalmente para no interferir con express.raw()
+ */
+const jsonParser = express.json();
 
 // --------------------------------------------------------------------
-// 1) Endpoint de inicialización (Ej.: GET /adms-api/device/init)
-//    Simula el intercambio de información inicial del dispositivo
+// 1) Ruta para inicialización o "ping" desde el dispositivo (GET)
+//    Ejemplo: GET /iclock/ping?SN=0316144680030
 // --------------------------------------------------------------------
-app.get('/adms-api/device/init', (req, res) => {
-  const serialNumber = req.query.SN || 'Unknown';
-  const authToken = req.query.auth_token || 'NoAuth'; 
-  console.log(`🔄 Inicialización del dispositivo: ${serialNumber}, authToken: ${authToken}`);
+app.get('/iclock/ping', (req, res) => {
+  const sn = req.query.SN || 'Unknown';
+  console.log(`📡 [GET /iclock/ping] Ping del dispositivo SN=${sn}`);
   
-  // Respuesta ficticia para demostrar opciones “tipo ADMS”
-  res.status(200).send({
-    message: 'ADMS init OK',
-    device: {
-      SN: serialNumber,
-      options: {
-        pushver: '2.4.2',
-        // Se pueden incluir más campos si ADMS los requiere
-      }
-    }
-  });
+  // Respuesta simple
+  res.status(200).send(`PONG from server, SN=${sn}, time=${new Date().toISOString()}`);
 });
 
 // --------------------------------------------------------------------
-// 2) Endpoint de intercambio de claves de seguridad (opcional)
-//    Ej.: GET /adms-api/security/exchange
+// 2) Ruta para que el dispositivo solicite comandos pendientes (GET)
+//    Ejemplo: GET /iclock/devicecmd?SN=0316144680030
 // --------------------------------------------------------------------
-app.get('/adms-api/security/exchange', (req, res) => {
-  // Aquí podrías manejar la generación/entrega de claves públicas, etc.
-  // Por ejemplo, si tu ADMS requiere TLS o un intercambio de llave asimétrica.
-  console.log('🔐 Intercambio de claves con dispositivo/ADMS');
+app.get('/iclock/devicecmd', (req, res) => {
+  const sn = req.query.SN || 'Unknown';
+  console.log(`📥 [GET /iclock/devicecmd] Dispositivo ${sn} pide comandos.`);
+
+  // Busca la cola de comandos en memoria
+  const deviceCommands = commandsQueue[sn] || [];
   
-  // Ejemplo de respuesta con clave ficticia
-  res.status(200).json({
-    publicKey: 'MIIBIjANBgkqh...FAKE_KEY...IDAQAB' // Ejemplo
-  });
+  if (deviceCommands.length === 0) {
+    // Sin comandos pendientes
+    console.log(`→ No hay comandos pendientes para SN=${sn}`);
+    return res.status(200).send('CMD: No hay comandos pendientes');
+  }
+  
+  // Si hay comandos, los enviamos en el formato que necesite el dispositivo
+  // Aquí los unimos con saltos de línea, por ejemplo
+  const response = deviceCommands.join('\n');
+  
+  // Limpiamos la cola para ese SN (asumiendo que ya los “descargó” el dispositivo)
+  commandsQueue[sn] = [];
+  
+  // Respuesta con los comandos pendientes
+  console.log(`→ Enviando ${deviceCommands.length} comando(s) a SN=${sn}`);
+  res.status(200).send(response);
 });
 
 // --------------------------------------------------------------------
-// 3) Endpoint para “ping” o “heartbeat” (verificar si el servidor está vivo)
-//    Ej.: GET /adms-api/device/ping
+// 3) Ruta para recibir datos crudos que envíe el dispositivo (POST).
+//    Ejemplo: POST /iclock/cdata?SN=0316144680030
 // --------------------------------------------------------------------
-app.get('/adms-api/device/ping', (req, res) => {
-  const serialNumber = req.query.SN || 'Unknown';
-  console.log(`🏓 Ping desde dispositivo: ${serialNumber}`);
-  res.status(200).json({ status: 'ok', serverTime: new Date() });
+app.post('/iclock/cdata', express.raw({ type: '*/*' }), (req, res) => {
+  const sn = req.query.SN || 'Unknown';
+  const stamp = req.query.Stamp || 'N/A';
+  
+  console.log(`📡 [POST /iclock/cdata] Datos recibidos de SN=${sn}, Stamp=${stamp}`);
+  
+  // El body se lee como buffer, lo pasamos a string para ver contenido
+  const rawContent = req.body.toString('utf8');
+  console.log('Contenido:', rawContent);
+
+  // TODO: Procesa y guarda en tu DB o archivo log, etc.
+  
+  // Enviamos respuesta simple
+  res.status(200).send('OK');
 });
 
 // --------------------------------------------------------------------
-// 4) Endpoint para solicitar comandos (similar a /iclock/getrequest)
-//    Ej.: GET /adms-api/commands/get
+// 4) Ruta para recibir resultados de comandos ejecutados por el dispositivo (POST).
+//    Ejemplo: POST /iclock/devicecmd?SN=0316144680030
 // --------------------------------------------------------------------
-app.get('/adms-api/commands/get', (req, res) => {
-  const serialNumber = req.query.SN || 'Unknown';
-  console.log(`📥 Dispositivo ${serialNumber} solicitando comandos`);
+app.post('/iclock/devicecmd', express.raw({ type: '*/*' }), (req, res) => {
+  const sn = req.query.SN || 'Unknown';
   
-  // En un caso real, aquí buscarías en BD qué comandos pendientes hay para ese SN
-  // Ejemplo simple (sin comandos pendientes):
-  const commands = []; // Array vacío si no hay nada
+  console.log(`📤 [POST /iclock/devicecmd] Resultado de comando desde SN=${sn}`);
+  console.log('Contenido:', req.body.toString('utf8'));
   
-  res.status(200).json({
-    commands: commands,
-    message: commands.length > 0 ? 'Hay comandos pendientes' : 'No hay comandos pendientes'
-  });
+  // Aquí podrías actualizar el estado de un comando en tu BD, etc.
+  
+  res.status(200).send('OK: Comando procesado');
 });
 
 // --------------------------------------------------------------------
-// 5) Endpoint para que el dispositivo “postee” los datos al servidor
-//    Ej.: POST /adms-api/data/push
+// 5) Ruta para que TÚ (admin o tu panel) añadas un comando a la cola de un dispositivo.
+//    Ejemplo: POST /commands (con JSON en el body: { "SN": "0316144680030", "command": "C:1:DATA UPDATE USERINFO ..." })
 // --------------------------------------------------------------------
-app.post('/adms-api/data/push', (req, res) => {
-  const serialNumber = req.query.SN || 'Unknown';
-  const table = req.query.table || 'Unknown'; // ej.: ATTLOG, USERINFO
-  console.log(`📡 Datos recibidos de ${serialNumber} para la tabla: ${table}`);
+app.post('/commands', jsonParser, (req, res) => {
+  const { SN, command } = req.body;
   
-  // Dependiendo de si envías JSON o texto plano, accede a req.body
-  // Si el dispositivo envía text/plain, quizás tengas que usar express.raw() para leerlo
-  // Este ejemplo asume que envías JSON en el body
-  console.log('Contenido del body:', req.body);
+  if (!SN || !command) {
+    return res.status(400).json({ error: 'SN y command son requeridos' });
+  }
   
-  // Aquí procesas y guardas en base de datos según la tabla
+  // Si no hay un array para este SN, lo creamos
+  if (!commandsQueue[SN]) {
+    commandsQueue[SN] = [];
+  }
+  
+  // Agregamos el nuevo comando
+  commandsQueue[SN].push(command);
+  
+  console.log(`➕ Nuevo comando para SN=${SN}: ${command}`);
+  res.status(200).json({ message: `Command added for SN=${SN}`, totalCommands: commandsQueue[SN].length });
+});
+
+// --------------------------------------------------------------------
+// 6) (Opcional) Endpoint de error logs, si el dispositivo reporta errores
+// --------------------------------------------------------------------
+app.post('/iclock/errorlog', express.raw({ type: '*/*' }), (req, res) => {
+  const sn = req.query.SN || 'Unknown';
+  console.log(`🛑 [POST /iclock/errorlog] Error log desde SN=${sn}`);
+  console.log('Contenido:', req.body.toString('utf8'));
+
+  // Guarda en DB / archivo
   // ...
-  
-  res.status(200).json({ status: 'OK', message: 'Datos recibidos y procesados' });
+
+  res.status(201).send('Error log recibido');
 });
 
 // --------------------------------------------------------------------
-// 6) Endpoint para que el dispositivo reporte la ejecución de un comando
-//    Ej.: POST /adms-api/commands/exec
-// --------------------------------------------------------------------
-app.post('/adms-api/commands/exec', (req, res) => {
-  const serialNumber = req.query.SN || 'Unknown';
-  console.log(`📤 Resultado de comando desde ${serialNumber}`);
-  console.log('Contenido:', req.body);
-  
-  // Aquí confirmas que el comando se ejecutó, guardas logs, etc.
-  res.status(200).json({ status: 'OK', message: 'Comando procesado' });
-});
-
-// --------------------------------------------------------------------
-// 7) (Opcional) Ruta de errores o logs si ADMS lo requiere
-//    Ej.: POST /adms-api/errorlog
-// --------------------------------------------------------------------
-app.post('/adms-api/errorlog', (req, res) => {
-  // Guardar logs de error en DB o archivo
-  console.log('🛑 Error Log recibido:', req.body);
-  res.status(201).json({ status: 'Logged' });
-});
-
-// --------------------------------------------------------------------
-// Iniciar el servidor
+// Iniciar servidor
 // --------------------------------------------------------------------
 app.listen(port, () => {
   console.log(`🚀 Servidor escuchando en http://localhost:${port}`);
