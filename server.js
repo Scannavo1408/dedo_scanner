@@ -25,6 +25,7 @@ const biometricosRouter = express.Router({ mergeParams: true });
   
   3. Recepción de datos de asistencia (POST):
      POST /biometricos/:id/iclock/cdata
+     Aquí se parsea la cadena recibida y se imprime cada campo con su significado.
      
   4. Recepción de datos en bruto (POST):
      POST /biometricos/:id/iclock/data/upload
@@ -33,13 +34,13 @@ const biometricosRouter = express.Router({ mergeParams: true });
      GET /biometricos/:id/iclock/accounts/login/
 */
 
-// Ruta principal del dispositivo (por ejemplo, /biometricos/41038)
+// 1. Ruta principal del dispositivo (por ejemplo, /biometricos/41038)
 biometricosRouter.get('/', (req, res) => {
   const deviceId = req.params.id; // Captura el ID desde la URL
   res.status(200).send(`Bienvenido al dispositivo con ID: ${deviceId}`);
 });
 
-// Ruta de inicialización del dispositivo (GET)
+// 2. Ruta de inicialización del dispositivo (GET)
 biometricosRouter.get('/iclock/cdata', (req, res) => {
   const deviceId = req.params.id; // Ejemplo: 41038
   const serialNumber = req.query.SN || "Unknown"; // Lee el parámetro de consulta SN
@@ -62,17 +63,40 @@ biometricosRouter.get('/iclock/cdata', (req, res) => {
   );
 });
 
-// Ruta POST para recibir datos de asistencia (por ejemplo, datos procesados)
+// 3. Ruta POST para recibir datos de asistencia (por ejemplo, datos procesados)
 biometricosRouter.post('/iclock/cdata', (req, res) => {
   const deviceId = req.params.id;
+  const dataString = req.body.toString('utf8').trim();
   console.log(`📡 Recibido desde dispositivo ${deviceId} - Datos de asistencia:`);
-  // Aquí mostramos los datos recibidos (convertidos a UTF-8)
-  console.log(req.body.toString('utf8'));
+  console.log(dataString);
+
+  // Suponemos que los campos están separados por espacios o tabulaciones
+  const fields = dataString.split(/\s+/);
+  
+  // Definición de cada campo (ejemplo de interpretación)
+  const fieldNames = [
+    "ID de empleado",        // Ej: 1
+    "Fecha y hora",          // Ej: 2025-02-06 14:50:53
+    "Modo de verificación",   // Ej: 255 (podría indicar huella, tarjeta, etc.)
+    "Tipo de registro",      // Ej: 1 (podría ser entrada o salida)
+    "Campo reservado 1",     // Ej: 0
+    "Campo reservado 2",     // Ej: 0
+    "Campo reservado 3",     // Ej: 0
+    "Campo reservado 4",     // Ej: 0
+    "Campo reservado 5",     // Ej: 0
+    "Campo reservado 6"      // Ej: 0
+  ];
+  
+  // Mostrar cada campo con su descripción
+  fields.forEach((value, index) => {
+    const fieldName = fieldNames[index] || `Campo ${index + 1}`;
+    console.log(`${fieldName}: ${value}`);
+  });
 
   res.status(200).send("OK");
 });
 
-// Ruta POST para recibir datos en bruto (upload)
+// 4. Ruta POST para recibir datos en bruto (upload)
 biometricosRouter.post('/iclock/data/upload', (req, res) => {
   const deviceId = req.params.id;
   console.log(`📡 Recibido desde dispositivo ${deviceId} - Datos en bruto:`);
@@ -81,15 +105,14 @@ biometricosRouter.post('/iclock/data/upload', (req, res) => {
   res.status(200).send("OK");
 });
 
-// Ruta de autenticación (login)
+// 5. Ruta de autenticación (login)
 biometricosRouter.get('/iclock/accounts/login/', (req, res) => {
   const deviceId = req.params.id;
   console.log(`📡 Dispositivo ${deviceId} intentando iniciar sesión:`, req.query);
   res.status(200).send("OK");
 });
 
-// Montamos el router usando el prefijo /biometricos/:id.
-// Esto significa que todas las rutas definidas en el router estarán anidadas bajo esta ruta.
+// Montamos el router usando el prefijo /biometricos/:id
 app.use('/biometricos/:id', biometricosRouter);
 
 // Iniciar el servidor
