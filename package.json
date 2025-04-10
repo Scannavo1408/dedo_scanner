@@ -1,22 +1,18 @@
 {
-  "name": "zkteco-server-simulator",
+  "name": "zkteco-server",
   "version": "1.0.0",
-  "description": "Mini servidor simulador para dispositivos de marcaje ZKTeco",
   "main": "index.js",
-  "engines": {
-    "node": ">=14.0.0"
-  },
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
   "dependencies": {
-    "body-parser": "^1.20.2",
-    "chalk": "^4.1.2",
-    "express": "^4.18.2",
+    "body-parser": "^2.2.0",
+    "chalk": "^5.4.1",
+    "express": "^5.1.0",
     "morgan": "^1.10.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
   }
 }
