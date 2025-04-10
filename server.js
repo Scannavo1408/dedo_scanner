@@ -3,7 +3,6 @@ const bodyParser = require('body-parser');
 const morgan = require('morgan');
 const chalk = require('chalk');
 const app = express();
-
 // Usar la variable de entorno PORT que proporciona Render, o 8081 como respaldo
 const port = process.env.PORT || 8081;
 
@@ -14,6 +13,8 @@ app.use(morgan('dev'));
 // Almacenamiento de datos simulado
 const devices = {};
 const attendanceRecords = [];
+const pendingCommands = {};
+const commandResponses = {}; // Para almacenar las respuestas a los comandos
 
 // Formatear fecha para logs
 const formatDate = () => {
@@ -38,7 +39,12 @@ app.get('/', (req, res) => {
           h1 { color: #333; }
           .container { max-width: 800px; margin: 0 auto; }
           .status { background-color: #dff0d8; padding: 15px; border-radius: 4px; }
+          .records { background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin-top: 20px; }
           ul { margin-top: 20px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+          table, th, td { border: 1px solid #ddd; }
+          th, td { padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; }
         </style>
       </head>
       <body>
@@ -50,10 +56,42 @@ app.get('/', (req, res) => {
             <p>Dispositivos conectados: ${Object.keys(devices).length}</p>
             <p>Marcajes registrados: ${attendanceRecords.length}</p>
           </div>
+          
+          <h2>Dispositivos Conectados:</h2>
+          <ul>
+            ${Object.keys(devices).map(sn => `
+              <li>
+                <strong>${sn}</strong> - 
+                Última conexión: ${new Date(devices[sn].lastSeen).toLocaleString()}
+              </li>
+            `).join('')}
+          </ul>
+          
+          <h2>Últimos 5 Marcajes:</h2>
+          <div class="records">
+            <table>
+              <tr>
+                <th>Usuario</th>
+                <th>Fecha/Hora</th>
+                <th>Dispositivo</th>
+                <th>Verificación</th>
+              </tr>
+              ${attendanceRecords.slice(-5).map(record => `
+                <tr>
+                  <td>${record.pin}</td>
+                  <td>${record.time}</td>
+                  <td>${record.deviceSN}</td>
+                  <td>${record.verify === '1' ? 'Huella' : record.verify === '2' ? 'Rostro' : 'Otro'}</td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>
+          
           <h2>Endpoints disponibles:</h2>
           <ul>
             <li><a href="/info">/info</a> - Información del servidor</li>
             <li><a href="/records">/records</a> - Ver registros de asistencia</li>
+            <li><code>/set-pin?deviceSN=NUMERO_SERIE&pin=ID_USUARIO</code> - Enviar PIN al dispositivo</li>
           </ul>
         </div>
       </body>
@@ -147,7 +185,7 @@ app.post('/iclock/cdata', (req, res) => {
   }
 });
 
-// Ruta para obtener comandos
+// Ruta para obtener comandos - ahora soporta envío de comandos
 app.get('/iclock/getrequest', (req, res) => {
   const { SN } = req.query;
   
@@ -160,27 +198,164 @@ app.get('/iclock/getrequest', (req, res) => {
     devices[SN].lastSeen = new Date();
   }
   
-  logEvent(SN, 'SOLICITUD_COMANDO', {});
+  // Verificar si hay comandos pendientes para este dispositivo
+  if (pendingCommands[SN]) {
+    const command = pendingCommands[SN];
+    delete pendingCommands[SN]; // Eliminar comando pendiente después de enviarlo
+    
+    // Generar ID único para el comando
+    const cmdId = 'cmd' + Date.now();
+    
+    // Registrar el comando para seguimiento
+    commandResponses[cmdId] = {
+      command: command,
+      sentAt: new Date(),
+      status: 'sent',
+      deviceSN: SN
+    };
+    
+    if (command.type === 'SET_PIN') {
+      const pin = command.pin;
+      
+      // Registrar el comando en logs
+      logEvent(SN, 'COMANDO_ENVIADO', { 
+        commandId: cmdId,
+        command: 'SET_USER_PIN', 
+        pin: pin 
+      });
+      
+      // Enviar comando al dispositivo para añadir/actualizar usuario
+      return res.status(200).send(`C:${cmdId}:DATA UPDATE USERINFO PIN=${pin} Name=${pin} Pri=0 Passwd= Card= Grp=1 TZ=0000000000000000`);
+    }
+  }
   
-  // Por defecto, no enviamos comandos
+  // No registramos cada solicitud vacía para reducir spam en los logs
   res.status(200).send('OK');
+});
+
+// Ruta para procesar respuestas a comandos
+app.post('/iclock/devicecmd', (req, res) => {
+  const { SN } = req.query;
+  const body = req.body;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
+  
+  // Extraer ID del comando y resultado
+  const matches = body.match(/ID=([^&]+)&Return=([^&]+)/);
+  if (matches && matches.length >= 3) {
+    const cmdId = matches[1];
+    const returnCode = matches[2];
+    
+    // Actualizar estado del comando
+    if (commandResponses[cmdId]) {
+      commandResponses[cmdId].status = returnCode === '0' ? 'success' : 'failed';
+      commandResponses[cmdId].returnCode = returnCode;
+      commandResponses[cmdId].responseTime = new Date();
+      
+      // Registrar respuesta en logs
+      logEvent(SN, 'RESPUESTA_COMANDO', {
+        commandId: cmdId,
+        command: commandResponses[cmdId].command,
+        status: commandResponses[cmdId].status,
+        returnCode: returnCode
+      });
+    }
+  }
+  
+  res.status(200).send('OK');
+});
+
+// Endpoint para setear un PIN para ser enviado al dispositivo
+app.get('/set-pin', (req, res) => {
+  const { deviceSN, pin } = req.query;
+  
+  if (!deviceSN || !pin) {
+    return res.status(400).json({ 
+      error: 'Se requiere deviceSN y pin',
+      example: '/set-pin?deviceSN=JJA1234300033&pin=41038'
+    });
+  }
+  
+  // Verificar si el dispositivo existe
+  if (!devices[deviceSN]) {
+    return res.status(404).json({ 
+      error: 'Dispositivo no encontrado',
+      knownDevices: Object.keys(devices)
+    });
+  }
+  
+  // Almacenar el PIN para ser enviado cuando el dispositivo haga la próxima solicitud
+  pendingCommands[deviceSN] = { type: 'SET_PIN', pin: pin };
+  
+  res.json({ 
+    success: true, 
+    message: `PIN ${pin} será enviado al dispositivo ${deviceSN} en la próxima solicitud`,
+    estimatedTime: 'Dentro de 10 segundos',
+    note: 'El dispositivo debe estar conectado y hacer una solicitud para recibir el comando'
+  });
 });
 
 // Ruta de información
 app.get('/info', (req, res) => {
   const info = {
-    devices: Object.keys(devices),
-    totalDevices: Object.keys(devices).length,
-    totalAttendanceRecords: attendanceRecords.length,
-    serverTime: new Date()
+    server: {
+      time: new Date(),
+      uptime: process.uptime() + ' segundos'
+    },
+    devices: Object.keys(devices).map(sn => ({
+      serialNumber: sn,
+      lastSeen: devices[sn].lastSeen,
+      info: devices[sn].options || {}
+    })),
+    stats: {
+      totalDevices: Object.keys(devices).length,
+      totalAttendanceRecords: attendanceRecords.length,
+      pendingCommands: Object.keys(pendingCommands).length
+    },
+    pendingCommands: pendingCommands,
+    commandResponses: commandResponses
   };
   
   res.json(info);
 });
 
-// Ruta de registros
+// Ruta de registros filtrable
 app.get('/records', (req, res) => {
-  res.json(attendanceRecords);
+  const { deviceSN, pin, startDate, endDate, limit } = req.query;
+  
+  let filteredRecords = [...attendanceRecords];
+  
+  // Aplicar filtros si existen
+  if (deviceSN) {
+    filteredRecords = filteredRecords.filter(record => record.deviceSN === deviceSN);
+  }
+  
+  if (pin) {
+    filteredRecords = filteredRecords.filter(record => record.pin === pin);
+  }
+  
+  if (startDate) {
+    const startDateTime = new Date(startDate);
+    filteredRecords = filteredRecords.filter(record => new Date(record.time) >= startDateTime);
+  }
+  
+  if (endDate) {
+    const endDateTime = new Date(endDate);
+    filteredRecords = filteredRecords.filter(record => new Date(record.time) <= endDateTime);
+  }
+  
+  // Aplicar límite si existe
+  if (limit && !isNaN(parseInt(limit))) {
+    filteredRecords = filteredRecords.slice(-parseInt(limit));
+  }
+  
+  res.json({
+    totalRecords: filteredRecords.length,
+    records: filteredRecords,
+    filters: { deviceSN, pin, startDate, endDate, limit }
+  });
 });
 
 // Función para procesar datos de asistencia
@@ -207,7 +382,7 @@ function processAttendanceData(deviceSN, data) {
       // Almacenar registro
       attendanceRecords.push(attendanceRecord);
       
-      // Log del marcaje
+      // Log del marcaje - Este es importante, mantenemos detallado
       logEvent(deviceSN, 'MARCAJE', attendanceRecord);
     }
   });
@@ -241,9 +416,11 @@ function processOptions(deviceSN, data) {
 app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
+  console.log('  Desplegado en: ' + (process.env.RENDER_EXTERNAL_URL || `http://localhost:${port}`));
   console.log('  Endpoints disponibles:');
   console.log('  - GET  /       : Página principal');
   console.log('  - GET  /info   : Información del servidor');
   console.log('  - GET  /records: Ver registros de asistencia');
+  console.log('  - GET  /set-pin: Enviar PIN al dispositivo');
   console.log('=================================================');
 });
