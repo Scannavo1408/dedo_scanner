@@ -3,7 +3,7 @@ services:
     name: zkteco-server
     runtime: node
     buildCommand: npm install
-    startCommand: npm start
+    startCommand: node index.js  # Comando explícito
     envVars:
       - key: NODE_ENV
         value: production
