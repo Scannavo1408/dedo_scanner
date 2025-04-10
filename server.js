@@ -37,9 +37,11 @@ app.get('/', (req, res) => {
         <style>
           body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
           h1 { color: #333; }
-          .container { max-width: 800px; margin: 0 auto; }
+          .container { max-width: 900px; margin: 0 auto; }
           .status { background-color: #dff0d8; padding: 15px; border-radius: 4px; }
           .records { background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin-top: 20px; }
+          .examples { background-color: #eaf7fd; padding: 15px; border-radius: 4px; margin-top: 20px; }
+          .code { font-family: monospace; background-color: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
           ul { margin-top: 20px; }
           table { width: 100%; border-collapse: collapse; margin-top: 20px; }
           table, th, td { border: 1px solid #ddd; }
@@ -58,40 +60,70 @@ app.get('/', (req, res) => {
           </div>
           
           <h2>Dispositivos Conectados:</h2>
-          <ul>
-            ${Object.keys(devices).map(sn => `
-              <li>
-                <strong>${sn}</strong> - 
-                Última conexión: ${new Date(devices[sn].lastSeen).toLocaleString()}
-              </li>
-            `).join('')}
-          </ul>
+          ${Object.keys(devices).length > 0 ? `
+            <ul>
+              ${Object.keys(devices).map(sn => `
+                <li>
+                  <strong>${sn}</strong> - 
+                  Última conexión: ${new Date(devices[sn].lastSeen).toLocaleString()}
+                </li>
+              `).join('')}
+            </ul>
+          ` : '<p>No hay dispositivos conectados todavía.</p>'}
           
           <h2>Últimos 5 Marcajes:</h2>
           <div class="records">
-            <table>
-              <tr>
-                <th>Usuario</th>
-                <th>Fecha/Hora</th>
-                <th>Dispositivo</th>
-                <th>Verificación</th>
-              </tr>
-              ${attendanceRecords.slice(-5).map(record => `
+            ${attendanceRecords.length > 0 ? `
+              <table>
                 <tr>
-                  <td>${record.pin}</td>
-                  <td>${record.time}</td>
-                  <td>${record.deviceSN}</td>
-                  <td>${record.verify === '1' ? 'Huella' : record.verify === '2' ? 'Rostro' : 'Otro'}</td>
+                  <th>Usuario</th>
+                  <th>Fecha/Hora</th>
+                  <th>Dispositivo</th>
+                  <th>Verificación</th>
                 </tr>
-              `).join('')}
-            </table>
+                ${attendanceRecords.slice(-5).map(record => `
+                  <tr>
+                    <td>${record.pin}</td>
+                    <td>${record.time}</td>
+                    <td>${record.deviceSN}</td>
+                    <td>${record.verify === '1' ? 'Huella' : record.verify === '2' ? 'Rostro' : 'Otro'}</td>
+                  </tr>
+                `).join('')}
+              </table>
+            ` : '<p>No hay marcajes registrados todavía.</p>'}
+          </div>
+          
+          <h2>Enviando PINs a los dispositivos:</h2>
+          <div class="examples">
+            <p><strong>Ejemplos de uso:</strong></p>
+            <ul>
+              <li>
+                Enviar a un dispositivo específico:<br>
+                <span class="code">/set-pin?deviceSN=JJA1234300033&pin=41038</span>
+              </li>
+              <li>
+                Enviar con nombre personalizado:<br>
+                <span class="code">/set-pin?deviceSN=JJA1234300033&pin=41038&name=Juan Perez</span>
+              </li>
+              <li>
+                Enviar a todos los dispositivos conectados:<br>
+                <span class="code">/set-pin?deviceSN=any&pin=41038</span>
+              </li>
+            </ul>
+            <p><strong>Parámetros:</strong></p>
+            <ul>
+              <li><strong>deviceSN</strong>: Número de serie del dispositivo o "any" para todos</li>
+              <li><strong>pin</strong>: ID de usuario a enviar</li>
+              <li><strong>name</strong> (opcional): Nombre del usuario (si se omite, se usa el PIN)</li>
+            </ul>
           </div>
           
           <h2>Endpoints disponibles:</h2>
           <ul>
-            <li><a href="/info">/info</a> - Información del servidor</li>
-            <li><a href="/records">/records</a> - Ver registros de asistencia</li>
-            <li><code>/set-pin?deviceSN=NUMERO_SERIE&pin=ID_USUARIO</code> - Enviar PIN al dispositivo</li>
+            <li><a href="/info">/info</a> - Información detallada del servidor</li>
+            <li><a href="/records">/records</a> - Ver todos los registros de asistencia</li>
+            <li><a href="/records?limit=10">/records?limit=10</a> - Ver los últimos 10 registros</li>
+            <li><a href="/set-pin">/set-pin</a> - Enviar PIN a los dispositivos (requiere parámetros)</li>
           </ul>
         </div>
       </body>
@@ -193,10 +225,18 @@ app.get('/iclock/getrequest', (req, res) => {
     return res.status(400).send('Error: SN no proporcionado');
   }
   
-  // Actualizar última vez visto
-  if (devices[SN]) {
-    devices[SN].lastSeen = new Date();
+  // Registrar el dispositivo si es nuevo (por si se conecta aquí primero)
+  if (!devices[SN]) {
+    devices[SN] = {
+      lastSeen: new Date(),
+      info: {},
+      firstSeenAt: new Date()
+    };
+    logEvent(SN, 'NUEVO_DISPOSITIVO', { message: 'Dispositivo detectado a través de solicitud de comando' });
   }
+  
+  // Actualizar última vez visto
+  devices[SN].lastSeen = new Date();
   
   // Verificar si hay comandos pendientes para este dispositivo
   if (pendingCommands[SN]) {
@@ -216,16 +256,18 @@ app.get('/iclock/getrequest', (req, res) => {
     
     if (command.type === 'SET_PIN') {
       const pin = command.pin;
+      const name = command.name || pin; // Usar nombre personalizado si existe
       
       // Registrar el comando en logs
       logEvent(SN, 'COMANDO_ENVIADO', { 
         commandId: cmdId,
         command: 'SET_USER_PIN', 
-        pin: pin 
+        pin: pin,
+        name: name
       });
       
       // Enviar comando al dispositivo para añadir/actualizar usuario
-      return res.status(200).send(`C:${cmdId}:DATA UPDATE USERINFO PIN=${pin} Name=${pin} Pri=0 Passwd= Card= Grp=1 TZ=0000000000000000`);
+      return res.status(200).send(`C:${cmdId}:DATA UPDATE USERINFO PIN=${pin} Name=${name} Pri=0 Passwd= Card= Grp=1 TZ=0000000000000000`);
     }
   }
   
@@ -269,25 +311,57 @@ app.post('/iclock/devicecmd', (req, res) => {
 
 // Endpoint para setear un PIN para ser enviado al dispositivo
 app.get('/set-pin', (req, res) => {
-  const { deviceSN, pin } = req.query;
+  const { deviceSN, pin, name } = req.query;
   
   if (!deviceSN || !pin) {
     return res.status(400).json({ 
       error: 'Se requiere deviceSN y pin',
-      example: '/set-pin?deviceSN=JJA1234300033&pin=41038'
+      example: '/set-pin?deviceSN=JJA1234300033&pin=41038',
+      note: 'También puedes incluir un parámetro "name" opcional para el nombre de usuario'
     });
   }
   
-  // Verificar si el dispositivo existe
-  if (!devices[deviceSN]) {
-    return res.status(404).json({ 
-      error: 'Dispositivo no encontrado',
-      knownDevices: Object.keys(devices)
+  // Si es una solicitud para cualquier dispositivo conectado
+  if (deviceSN.toLowerCase() === 'any' || deviceSN === '*') {
+    const connectedDevices = Object.keys(devices);
+    
+    if (connectedDevices.length === 0) {
+      return res.status(404).json({ 
+        error: 'No hay dispositivos conectados',
+        suggestion: 'Espera a que un dispositivo se conecte antes de usar "any"'
+      });
+    }
+    
+    // Enviar el comando a todos los dispositivos conectados
+    for (const sn of connectedDevices) {
+      pendingCommands[sn] = { 
+        type: 'SET_PIN', 
+        pin: pin,
+        name: name || pin, // Usar el nombre proporcionado o el PIN como nombre
+        createdAt: new Date()
+      };
+    }
+    
+    return res.json({ 
+      success: true, 
+      message: `PIN ${pin} será enviado a todos los dispositivos conectados (${connectedDevices.length})`,
+      devices: connectedDevices,
+      estimatedTime: 'Dentro de 10 segundos',
     });
+  }
+  
+  // Verificación opcional - permite enviar comandos a dispositivos que aún no se han conectado
+  if (!devices[deviceSN]) {
+    console.log(`Advertencia: Se está enviando un comando al dispositivo ${deviceSN} que aún no se ha conectado`);
   }
   
   // Almacenar el PIN para ser enviado cuando el dispositivo haga la próxima solicitud
-  pendingCommands[deviceSN] = { type: 'SET_PIN', pin: pin };
+  pendingCommands[deviceSN] = { 
+    type: 'SET_PIN', 
+    pin: pin,
+    name: name || pin, // Usar el nombre proporcionado o el PIN como nombre
+    createdAt: new Date()
+  };
   
   res.json({ 
     success: true, 
