@@ -132,38 +132,47 @@ app.get('/records', (req, res) => {
   res.json(attendanceRecords);
 });
 
-// RUTAS PARA MANEJAR PREFIJO ESPECÍFICO (41038)
-// Ruta para inicialización del dispositivo con prefijo 41038
-app.get('/41038/iclock/cdata', (req, res) => {
-  const { SN, options, pushver, language } = req.query;
+// SOLUCIÓN ALTERNATIVA: UNA ÚNICA RUTA QUE CAPTURE TODO
+// Ruta para capturar TODAS las solicitudes que comiencen con /41038
+app.all('/41038*', (req, res) => {
+  const fullPath = req.path;
+  const method = req.method;
+  const query = req.query;
+  const { SN, table, Stamp, options, pushver, language } = req.query;
+  const body = req.body;
   
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
-  }
-
-  console.log(`=== Inicialización recibida en /41038/iclock/cdata ===`);
-
-  // Registrar dispositivo si es nuevo
-  if (!devices[SN]) {
-    devices[SN] = {
-      lastSeen: new Date(),
-      info: {}
-    };
-    logEvent(SN, 'REGISTRO', { firstConnection: true });
-  }
+  console.log(`=== Solicitud recibida: ${method} ${fullPath} ===`);
   
-  // Actualizar última vez visto
-  devices[SN].lastSeen = new Date();
-  
-  // Log de la inicialización
-  logEvent(SN, 'INICIALIZACION', { 
-    pushver, 
-    language, 
-    options 
-  });
-  
-  // Respuesta según el protocolo PUSH
-  const response = `GET OPTION FROM: ${SN}
+  // Manejar según la ruta específica
+  if (fullPath === '/41038/iclock/cdata') {
+    if (method === 'GET') {
+      // Inicialización del dispositivo
+      if (!SN) {
+        return res.status(400).send('Error: SN no proporcionado');
+      }
+      
+      // Registrar dispositivo si es nuevo
+      if (!devices[SN]) {
+        devices[SN] = {
+          lastSeen: new Date(),
+          info: {}
+        };
+        logEvent(SN, 'REGISTRO', { firstConnection: true, path: fullPath });
+      }
+      
+      // Actualizar última vez visto
+      devices[SN].lastSeen = new Date();
+      
+      // Log de la inicialización
+      logEvent(SN, 'INICIALIZACION', { 
+        pushver, 
+        language, 
+        options,
+        path: fullPath
+      });
+      
+      // Respuesta según el protocolo PUSH
+      const response = `GET OPTION FROM: ${SN}
 ATTLOGStamp=None
 OPERLOGStamp=9999
 ATTPHOTOStamp=None
@@ -178,123 +187,69 @@ Encrypt=None
 ServerVer=2.4.2
 PushProtVer=2.4.2`;
 
-  res.status(200).send(response);
-});
-
-// Ruta para subir registros de asistencia con prefijo 41038
-app.post('/41038/iclock/cdata', (req, res) => {
-  const { SN, table, Stamp } = req.query;
-  const body = req.body;
-  
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
-  }
-  
-  console.log(`=== POST recibido en /41038/iclock/cdata ===`);
-  
-  // Actualizar última vez visto
-  if (devices[SN]) {
-    devices[SN].lastSeen = new Date();
-  }
-  
-  // Procesar según el tipo de tabla
-  switch (table) {
-    case 'ATTLOG':
-      // Datos de marcación de asistencia
-      processAttendanceData(SN, body);
-      res.status(200).send(`OK: ${body.trim().split('\n').length}`);
-      break;
+      return res.status(200).send(response);
+    } 
+    else if (method === 'POST') {
+      // Subir datos
+      if (!SN) {
+        return res.status(400).send('Error: SN no proporcionado');
+      }
       
-    case 'OPERLOG':
-      // Datos de operaciones
-      logEvent(SN, 'OPERACION', { data: body });
-      res.status(200).send('OK: 1');
-      break;
+      // Actualizar última vez visto
+      if (devices[SN]) {
+        devices[SN].lastSeen = new Date();
+      }
       
-    case 'options':
-      // Datos de configuración del dispositivo
-      processOptions(SN, body);
-      res.status(200).send('OK');
-      break;
-      
-    default:
-      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body });
-      res.status(200).send('OK');
-  }
-});
-
-// Ruta para obtener comandos con prefijo 41038
-app.get('/41038/iclock/getrequest', (req, res) => {
-  const { SN } = req.query;
-  
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
-  }
-  
-  console.log(`=== Solicitud de comando recibida en /41038/iclock/getrequest ===`);
-  
-  // Actualizar última vez visto
-  if (devices[SN]) {
-    devices[SN].lastSeen = new Date();
-  }
-  
-  logEvent(SN, 'SOLICITUD_COMANDO', {});
-  
-  // Por defecto, no enviamos comandos
-  res.status(200).send('OK');
-});
-
-// Ruta para capturar el acceso directo a /41038
-app.all('/41038', (req, res) => {
-  const method = req.method;
-  const query = req.query;
-  let body = '';
-  
-  // Verificar si hay cuerpo en la solicitud
-  if (req.body) {
-    body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString();
+      // Procesar según el tipo de tabla
+      switch (table) {
+        case 'ATTLOG':
+          // Datos de marcación de asistencia
+          processAttendanceData(SN, body);
+          return res.status(200).send(`OK: ${body.trim().split('\n').length}`);
+          
+        case 'OPERLOG':
+          // Datos de operaciones
+          logEvent(SN, 'OPERACION', { data: body, path: fullPath });
+          return res.status(200).send('OK: 1');
+          
+        case 'options':
+          // Datos de configuración del dispositivo
+          processOptions(SN, body);
+          return res.status(200).send('OK');
+          
+        default:
+          logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, path: fullPath });
+          return res.status(200).send('OK');
+      }
+    }
+  } 
+  else if (fullPath === '/41038/iclock/getrequest') {
+    // Solicitud de comandos
+    if (!SN) {
+      return res.status(400).send('Error: SN no proporcionado');
+    }
+    
+    // Actualizar última vez visto
+    if (devices[SN]) {
+      devices[SN].lastSeen = new Date();
+    }
+    
+    logEvent(SN, 'SOLICITUD_COMANDO', { path: fullPath });
+    
+    // Por defecto, no enviamos comandos
+    return res.status(200).send('OK');
   }
   
-  console.log(`=== Acceso directo a /41038 ===`);
-  
-  // Registrar en el log la información recibida
-  logEvent('ACCESO_DIRECTO', '41038', {
+  // Para cualquier otra ruta que comience con /41038
+  logEvent('RUTA_GENERICA', '41038', {
+    path: fullPath,
     method,
     query,
-    body,
-    headers: req.headers,
+    body: typeof body === 'object' ? JSON.stringify(body) : body ? body.toString() : '',
     receivedAt: new Date()
   });
   
-  // Responder simplemente con OK
-  res.status(200).send('OK');
-});
-
-// Ruta para capturar cualquier otra solicitud en /41038
-app.all('/41038/*', (req, res) => {
-  const path = req.path;
-  const method = req.method;
-  const query = req.query;
-  let body = '';
-  
-  // Verificar si hay cuerpo en la solicitud
-  if (req.body) {
-    body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString();
-  }
-  
-  console.log(`=== Solicitud no manejada específicamente: ${method} ${path} ===`);
-  
-  // Registrar en el log la información recibida
-  logEvent('RUTA_ADICIONAL', '41038', {
-    path,
-    method,
-    query,
-    body,
-    headers: req.headers,
-    receivedAt: new Date()
-  });
-  
-  // Responder con OK para no generar errores
+  // Responder siempre con OK para evitar errores
   res.status(200).send('OK');
 });
 
@@ -303,13 +258,9 @@ app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
   console.log('  Endpoints disponibles:');
-  console.log('  - GET  /                         : Página principal');
-  console.log('  - GET  /info                     : Información del servidor');
-  console.log('  - GET  /records                  : Ver registros de asistencia');
-  console.log('  - GET  /41038/iclock/cdata       : Inicialización de dispositivo');
-  console.log('  - POST /41038/iclock/cdata       : Subir registros de asistencia');
-  console.log('  - GET  /41038/iclock/getrequest  : Obtener comandos');
-  console.log('  - ANY  /41038                    : Acceso directo');
-  console.log('  - ANY  /41038/*                  : Cualquier otra ruta');
+  console.log('  - GET  /                  : Página principal');
+  console.log('  - GET  /info              : Información del servidor');
+  console.log('  - GET  /records           : Ver registros de asistencia');
+  console.log('  - ANY  /41038*            : Todas las rutas que comiencen con /41038');
   console.log('=================================================');
 });
