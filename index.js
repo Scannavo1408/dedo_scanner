@@ -24,10 +24,90 @@ const formatDate = () => {
   return now.toISOString().replace('T', ' ').substring(0, 19);
 };
 
+// Endpoint para ver los últimos N marcajes de manera legible
+app.get('/latest-logs', (req, res) => {
+  const count = parseInt(req.query.count) || 10; // Número de marcajes a mostrar, por defecto 10
+  const empresa = req.query.empresa || global.currentPin;
+  
+  // Filtrar por empresa si está especificada
+  let filteredRecords = [...attendanceRecords]; // Hacer una copia para no modificar el original
+  
+  if (empresa) {
+    filteredRecords = filteredRecords.filter(record => record.empresa === empresa);
+  }
+  
+  // Obtener los últimos N registros
+  const latestRecords = filteredRecords.slice(-count);
+  
+  // Formato HTML para mostrar los marcajes de manera legible
+  res.send(`
+    <html>
+      <head>
+        <title>Últimos Marcajes</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+          h1, h2 { color: #333; }
+          .container { max-width: 900px; margin: 0 auto; }
+          .status { background-color: #dff0d8; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+          table { width: 100%; border-collapse: collapse; }
+          table, th, td { border: 1px solid #ddd; }
+          th, td { padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; }
+          tr:nth-child(even) { background-color: #f9f9f9; }
+          .empresa { font-weight: bold; color: #337ab7; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Últimos Marcajes</h1>
+          
+          <div class="status">
+            <p>Empresa actual: <span class="empresa">${global.currentPin || 'No establecida'}</span></p>
+            <p>Total de marcajes: ${attendanceRecords.length}</p>
+            <p>Mostrando: ${latestRecords.length} registros</p>
+          </div>
+          
+          <table>
+            <tr>
+              <th>Usuario</th>
+              <th>Fecha/Hora</th>
+              <th>Dispositivo</th>
+              <th>Verificación</th>
+              <th>Empresa</th>
+              <th>Recibido</th>
+            </tr>
+            ${latestRecords.map(record => `
+              <tr>
+                <td>${record.pin}</td>
+                <td>${record.time}</td>
+                <td>${record.deviceSN}</td>
+                <td>${record.verify === '1' ? 'Huella' : record.verify === '2' ? 'Rostro' : 'Otro'}</td>
+                <td class="empresa">${record.empresa || 'N/A'}</td>
+                <td>${new Date(record.receivedAt).toLocaleString()}</td>
+              </tr>
+            `).join('')}
+          </table>
+          
+          <p style="margin-top: 20px;">
+            <a href="/">Volver a la página principal</a>
+          </p>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
 // Función para imprimir logs formateados
 const logEvent = (deviceSN, eventType, details) => {
   const timestamp = formatDate();
-  console.log(`[${timestamp}] [${deviceSN}] [${eventType}] ${JSON.stringify(details, null, 2)}`);
+  // Asegurarse de que los detalles siempre se impriman, incluso si son complejos
+  let detailsStr;
+  try {
+    detailsStr = JSON.stringify(details, null, 2);
+  } catch (e) {
+    detailsStr = "Error al serializar detalles: " + e.message;
+  }
+  console.log(`[${timestamp}] [${deviceSN}] [${eventType}] ${detailsStr}`);
 };
 
 // Ruta para capturar el PIN como segmento de URL: /pin/41038
@@ -274,10 +354,12 @@ app.get('/records', (req, res) => {
   });
 });
 
-// Función para procesar datos de asistencia - MODIFICADA
+// Función para procesar datos de asistencia
 function processAttendanceData(deviceSN, data) {
   const records = data.trim().split('\n');
   const currentEmpresa = global.currentPin || 'default'; // Usar 'default' si no hay PIN establecido
+  
+  console.log(`Procesando ${records.length} marcajes para empresa: ${currentEmpresa}`);
   
   records.forEach(record => {
     const fields = record.split('\t');
@@ -300,22 +382,20 @@ function processAttendanceData(deviceSN, data) {
       // Almacenar registro
       attendanceRecords.push(attendanceRecord);
       
-      // Log del marcaje
-      logEvent(deviceSN, 'MARCAJE', {
-        ...attendanceRecord,
-        empresa: currentEmpresa
-      });
+      // Log del marcaje - Asegurarse de que esto se imprime
+      console.log(`[${formatDate()}] [MARCAJE_DIRECTO] Usuario ${pin} marcó a las ${time} en dispositivo ${deviceSN} (Empresa: ${currentEmpresa})`);
       
-      // Aquí puedes implementar lógica adicional con el PIN/Empresa
-      // Por ejemplo, enviar a una API externa específica para esta empresa
-      console.log(`Marcaje procesado para empresa: ${currentEmpresa}`);
+      // También usar la función de log
+      logEvent(deviceSN, 'MARCAJE', attendanceRecord);
     }
   });
   
-  // Estadísticas
+  // Estadísticas más visibles
+  console.log("\n==============================================================");
   console.log(`=== Marcajes Recibidos: ${records.length} ===`);
   console.log(`=== Total de Marcajes: ${attendanceRecords.length} ===`);
   console.log(`=== Empresa/PIN actual: ${currentEmpresa} ===`);
+  console.log("==============================================================\n");
 }
 
 // Función para procesar opciones del dispositivo - SIN CAMBIOS
