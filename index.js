@@ -184,7 +184,127 @@ app.get('/records', (req, res) => {
   res.json(attendanceRecords);
 });
 
-// NUEVA RUTA: Para recibir parámetro como número (ej: /41038)
+// NUEVAS RUTAS: Para manejar solicitudes con prefijo numérico (ej: /41038/iclock/...)
+
+// Ruta para inicialización del dispositivo con prefijo
+app.get('/:id([0-9]+)/iclock/cdata', (req, res) => {
+  const id = req.params.id;
+  const { SN, options, pushver, language } = req.query;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
+
+  // Log adicional para el prefijo numérico
+  console.log(`=== Solicitud con prefijo /${id} ===`);
+
+  // Registrar dispositivo si es nuevo
+  if (!devices[SN]) {
+    devices[SN] = {
+      lastSeen: new Date(),
+      info: {}
+    };
+    logEvent(SN, 'REGISTRO', { firstConnection: true, prefixId: id });
+  }
+  
+  // Actualizar última vez visto
+  devices[SN].lastSeen = new Date();
+  
+  // Log de la inicialización
+  logEvent(SN, 'INICIALIZACION', { 
+    pushver, 
+    language, 
+    options,
+    prefixId: id
+  });
+  
+  // Respuesta según el protocolo PUSH
+  const response = `GET OPTION FROM: ${SN}
+ATTLOGStamp=None
+OPERLOGStamp=9999
+ATTPHOTOStamp=None
+ErrorDelay=30
+Delay=10
+TransTimes=00:00;14:05
+TransInterval=1
+TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP UserPic
+TimeZone=8
+Realtime=1
+Encrypt=None
+ServerVer=2.4.2
+PushProtVer=2.4.2`;
+
+  res.status(200).send(response);
+});
+
+// Ruta para subir registros de asistencia con prefijo
+app.post('/:id([0-9]+)/iclock/cdata', (req, res) => {
+  const id = req.params.id;
+  const { SN, table, Stamp } = req.query;
+  const body = req.body;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
+  
+  // Log adicional para el prefijo numérico
+  console.log(`=== Solicitud POST con prefijo /${id} ===`);
+  
+  // Actualizar última vez visto
+  if (devices[SN]) {
+    devices[SN].lastSeen = new Date();
+  }
+  
+  // Procesar según el tipo de tabla
+  switch (table) {
+    case 'ATTLOG':
+      // Datos de marcación de asistencia
+      processAttendanceData(SN, body, id);
+      res.status(200).send(`OK: ${body.trim().split('\n').length}`);
+      break;
+      
+    case 'OPERLOG':
+      // Datos de operaciones
+      logEvent(SN, 'OPERACION', { data: body, prefixId: id });
+      res.status(200).send('OK: 1');
+      break;
+      
+    case 'options':
+      // Datos de configuración del dispositivo
+      processOptions(SN, body, id);
+      res.status(200).send('OK');
+      break;
+      
+    default:
+      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, prefixId: id });
+      res.status(200).send('OK');
+  }
+});
+
+// Ruta para obtener comandos con prefijo
+app.get('/:id([0-9]+)/iclock/getrequest', (req, res) => {
+  const id = req.params.id;
+  const { SN } = req.query;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
+  
+  // Log adicional para el prefijo numérico
+  console.log(`=== Solicitud getrequest con prefijo /${id} ===`);
+  
+  // Actualizar última vez visto
+  if (devices[SN]) {
+    devices[SN].lastSeen = new Date();
+  }
+  
+  logEvent(SN, 'SOLICITUD_COMANDO', { prefixId: id });
+  
+  // Por defecto, no enviamos comandos
+  res.status(200).send('OK');
+});
+
+// Ruta genérica para recibir cualquier otra solicitud con un ID numérico
 app.all('/:id([0-9]+)', (req, res) => {
   const id = req.params.id;
   const method = req.method;
@@ -213,7 +333,7 @@ app.all('/:id([0-9]+)', (req, res) => {
 });
 
 // Función para procesar datos de asistencia
-function processAttendanceData(deviceSN, data) {
+function processAttendanceData(deviceSN, data, prefixId = null) {
   const records = data.trim().split('\n');
   
   records.forEach(record => {
@@ -230,7 +350,8 @@ function processAttendanceData(deviceSN, data) {
         verify,
         workcode,
         additionalData: rest,
-        receivedAt: new Date()
+        receivedAt: new Date(),
+        prefixId: prefixId // Añadir el ID de prefijo si existe
       };
       
       // Almacenar registro
@@ -247,7 +368,7 @@ function processAttendanceData(deviceSN, data) {
 }
 
 // Función para procesar opciones del dispositivo
-function processOptions(deviceSN, data) {
+function processOptions(deviceSN, data, prefixId = null) {
   const options = {};
   const items = data.split(',');
   
@@ -257,6 +378,11 @@ function processOptions(deviceSN, data) {
       options[key.trim()] = value.trim();
     }
   });
+  
+  // Añadir el ID de prefijo si existe
+  if (prefixId) {
+    options.prefixId = prefixId;
+  }
   
   // Guardar las opciones en el dispositivo
   if (devices[deviceSN]) {
@@ -271,9 +397,15 @@ app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
   console.log('  Endpoints disponibles:');
-  console.log('  - GET  /       : Página principal');
-  console.log('  - GET  /info   : Información del servidor');
-  console.log('  - GET  /records: Ver registros de asistencia');
-  console.log('  - ANY  /:id    : Recibir y registrar información por ID');
+  console.log('  - GET  /                    : Página principal');
+  console.log('  - GET  /info                : Información del servidor');
+  console.log('  - GET  /records             : Ver registros de asistencia');
+  console.log('  - GET  /iclock/cdata        : Inicialización de dispositivo');
+  console.log('  - POST /iclock/cdata        : Subir registros de asistencia');
+  console.log('  - GET  /iclock/getrequest   : Obtener comandos');
+  console.log('  - GET  /:id/iclock/cdata    : Inicialización con prefijo numérico');
+  console.log('  - POST /:id/iclock/cdata    : Subir registros con prefijo numérico');
+  console.log('  - GET  /:id/iclock/getrequest: Obtener comandos con prefijo numérico');
+  console.log('  - ANY  /:id                 : Recibir información con ID numérico');
   console.log('=================================================');
 });
