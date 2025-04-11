@@ -62,7 +62,7 @@ app.get('/', (req, res) => {
 });
 
 // Ruta para inicialización del dispositivo
-app.get('/:id/iclock/cdata', (req, res) => {
+app.get('/iclock/cdata', (req, res) => {
   const { SN, options, pushver, language } = req.query;
   
   if (!SN) {
@@ -108,7 +108,7 @@ PushProtVer=2.4.2`;
 });
 
 // Ruta para subir registros de asistencia
-app.post('/:id/iclock/cdata', (req, res) => {
+app.post('/iclock/cdata', (req, res) => {
   const { SN, table, Stamp } = req.query;
   const body = req.body;
   
@@ -148,7 +148,7 @@ app.post('/:id/iclock/cdata', (req, res) => {
 });
 
 // Ruta para obtener comandos
-app.get('/:id/iclock/getrequest', (req, res) => {
+app.get('/iclock/getrequest', (req, res) => {
   const { SN } = req.query;
   
   if (!SN) {
@@ -167,7 +167,7 @@ app.get('/:id/iclock/getrequest', (req, res) => {
 });
 
 // Ruta de información
-app.get('/:id/info', (req, res) => {
+app.get('/info', (req, res) => {
   const info = {
     devices: Object.keys(devices),
     totalDevices: Object.keys(devices).length,
@@ -179,15 +179,8 @@ app.get('/:id/info', (req, res) => {
 });
 
 // Ruta de registros
-app.get('/:id/records', (req, res) => {
+app.get('/records', (req, res) => {
   res.json(attendanceRecords);
-});
-
-// Ruta para capturar ID dinámico
-app.get('/:id', (req, res) => {
-  const id = req.params.id;
-  logEvent('SISTEMA', 'ID_CAPTURADO', { id });
-  res.send(`ID recibido: ${id}`);
 });
 
 // Función para procesar datos de asistencia
