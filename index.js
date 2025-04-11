@@ -54,6 +54,7 @@ app.get('/', (req, res) => {
           <ul>
             <li><a href="/info">/info</a> - Información del servidor</li>
             <li><a href="/records">/records</a> - Ver registros de asistencia</li>
+            <li>/[ID] - Recibir y registrar información por ID</li>
           </ul>
         </div>
       </body>
@@ -183,6 +184,34 @@ app.get('/records', (req, res) => {
   res.json(attendanceRecords);
 });
 
+// NUEVA RUTA: Para recibir parámetro como número (ej: /41038)
+app.all('/:id([0-9]+)', (req, res) => {
+  const id = req.params.id;
+  const method = req.method;
+  const query = req.query;
+  let body = '';
+  
+  // Verificar si hay cuerpo en la solicitud
+  if (req.body) {
+    body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString();
+  }
+  
+  // Registrar en el log la información recibida
+  logEvent('PARAMETRO', 'RECEPCION', {
+    id,
+    method,
+    query,
+    body,
+    headers: req.headers,
+    receivedAt: new Date()
+  });
+  
+  // Responder simplemente con OK
+  res.status(200).send('OK');
+  
+  console.log(`=== Recepción en ruta /${id} ===`);
+});
+
 // Función para procesar datos de asistencia
 function processAttendanceData(deviceSN, data) {
   const records = data.trim().split('\n');
@@ -245,5 +274,6 @@ app.listen(port, () => {
   console.log('  - GET  /       : Página principal');
   console.log('  - GET  /info   : Información del servidor');
   console.log('  - GET  /records: Ver registros de asistencia');
+  console.log('  - ANY  /:id    : Recibir y registrar información por ID');
   console.log('=================================================');
 });
