@@ -28,7 +28,7 @@ const logEvent = (deviceSN, eventType, details) => {
 };
 
 // Función para procesar datos de asistencia
-function processAttendanceData(deviceSN, data, prefix = null) {
+function processAttendanceData(deviceSN, data) {
   const records = data.trim().split('\n');
   
   records.forEach(record => {
@@ -45,8 +45,7 @@ function processAttendanceData(deviceSN, data, prefix = null) {
         verify,
         workcode,
         additionalData: rest,
-        receivedAt: new Date(),
-        prefix: prefix // Registrar si vino de un prefijo
+        receivedAt: new Date()
       };
       
       // Almacenar registro
@@ -63,7 +62,7 @@ function processAttendanceData(deviceSN, data, prefix = null) {
 }
 
 // Función para procesar opciones del dispositivo
-function processOptions(deviceSN, data, prefix = null) {
+function processOptions(deviceSN, data) {
   const options = {};
   const items = data.split(',');
   
@@ -73,11 +72,6 @@ function processOptions(deviceSN, data, prefix = null) {
       options[key.trim()] = value.trim();
     }
   });
-  
-  // Añadir información del prefijo
-  if (prefix) {
-    options.prefix = prefix;
-  }
   
   // Guardar las opciones en el dispositivo
   if (devices[deviceSN]) {
@@ -114,7 +108,6 @@ app.get('/', (req, res) => {
           <ul>
             <li><a href="/info">/info</a> - Información del servidor</li>
             <li><a href="/records">/records</a> - Ver registros de asistencia</li>
-            <li>/:prefijo - Cualquier ruta con prefijo numérico (ej: /41038/...)</li>
           </ul>
         </div>
       </body>
@@ -139,39 +132,38 @@ app.get('/records', (req, res) => {
   res.json(attendanceRecords);
 });
 
-// FUNCIONES PARA MANEJAR RUTAS ZK TECO
-// Estas se reutilizarán para las rutas con y sin prefijo
-const zkTecoHandlers = {
-  // Manejador para inicialización del dispositivo
-  handleInitialization: (req, res, prefix = null) => {
-    const { SN, options, pushver, language } = req.query;
-    
-    if (!SN) {
-      return res.status(400).send('Error: SN no proporcionado');
-    }
+// RUTAS PARA MANEJAR PREFIJO ESPECÍFICO (41038)
+// Ruta para inicialización del dispositivo con prefijo 41038
+app.get('/41038/iclock/cdata', (req, res) => {
+  const { SN, options, pushver, language } = req.query;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
 
-    // Registrar dispositivo si es nuevo
-    if (!devices[SN]) {
-      devices[SN] = {
-        lastSeen: new Date(),
-        info: {}
-      };
-      logEvent(SN, 'REGISTRO', { firstConnection: true, prefix });
-    }
-    
-    // Actualizar última vez visto
-    devices[SN].lastSeen = new Date();
-    
-    // Log de la inicialización
-    logEvent(SN, 'INICIALIZACION', { 
-      pushver, 
-      language, 
-      options,
-      prefix 
-    });
-    
-    // Respuesta según el protocolo PUSH
-    const response = `GET OPTION FROM: ${SN}
+  console.log(`=== Inicialización recibida en /41038/iclock/cdata ===`);
+
+  // Registrar dispositivo si es nuevo
+  if (!devices[SN]) {
+    devices[SN] = {
+      lastSeen: new Date(),
+      info: {}
+    };
+    logEvent(SN, 'REGISTRO', { firstConnection: true });
+  }
+  
+  // Actualizar última vez visto
+  devices[SN].lastSeen = new Date();
+  
+  // Log de la inicialización
+  logEvent(SN, 'INICIALIZACION', { 
+    pushver, 
+    language, 
+    options 
+  });
+  
+  // Respuesta según el protocolo PUSH
+  const response = `GET OPTION FROM: ${SN}
 ATTLOGStamp=None
 OPERLOGStamp=9999
 ATTPHOTOStamp=None
@@ -186,139 +178,121 @@ Encrypt=None
 ServerVer=2.4.2
 PushProtVer=2.4.2`;
 
-    res.status(200).send(response);
-  },
-  
-  // Manejador para subir registros de asistencia
-  handleDataUpload: (req, res, prefix = null) => {
-    const { SN, table, Stamp } = req.query;
-    const body = req.body;
-    
-    if (!SN) {
-      return res.status(400).send('Error: SN no proporcionado');
-    }
-    
-    // Actualizar última vez visto
-    if (devices[SN]) {
-      devices[SN].lastSeen = new Date();
-    }
-    
-    // Procesar según el tipo de tabla
-    switch (table) {
-      case 'ATTLOG':
-        // Datos de marcación de asistencia
-        processAttendanceData(SN, body, prefix);
-        res.status(200).send(`OK: ${body.trim().split('\n').length}`);
-        break;
-        
-      case 'OPERLOG':
-        // Datos de operaciones
-        logEvent(SN, 'OPERACION', { data: body, prefix });
-        res.status(200).send('OK: 1');
-        break;
-        
-      case 'options':
-        // Datos de configuración del dispositivo
-        processOptions(SN, body, prefix);
-        res.status(200).send('OK');
-        break;
-        
-      default:
-        logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, prefix });
-        res.status(200).send('OK');
-    }
-  },
-  
-  // Manejador para obtener comandos
-  handleGetRequest: (req, res, prefix = null) => {
-    const { SN } = req.query;
-    
-    if (!SN) {
-      return res.status(400).send('Error: SN no proporcionado');
-    }
-    
-    // Actualizar última vez visto
-    if (devices[SN]) {
-      devices[SN].lastSeen = new Date();
-    }
-    
-    logEvent(SN, 'SOLICITUD_COMANDO', { prefix });
-    
-    // Por defecto, no enviamos comandos
-    res.status(200).send('OK');
-  }
-};
-
-// CONFIGURAR RUTAS NORMALES (sin prefijo)
-// Ruta para inicialización del dispositivo
-app.get('/iclock/cdata', (req, res) => {
-  zkTecoHandlers.handleInitialization(req, res);
+  res.status(200).send(response);
 });
 
-// Ruta para subir registros de asistencia
-app.post('/iclock/cdata', (req, res) => {
-  zkTecoHandlers.handleDataUpload(req, res);
-});
-
-// Ruta para obtener comandos
-app.get('/iclock/getrequest', (req, res) => {
-  zkTecoHandlers.handleGetRequest(req, res);
-});
-
-// CONFIGURAR RUTAS CON PREFIJO NUMÉRICO
-// Importante: Middleware para capturar todas las rutas con prefijo numérico
-app.use('/:id([0-9]+)', (req, res, next) => {
-  // Guardamos el ID para usarlo en las rutas específicas
-  req.prefixId = req.params.id;
+// Ruta para subir registros de asistencia con prefijo 41038
+app.post('/41038/iclock/cdata', (req, res) => {
+  const { SN, table, Stamp } = req.query;
+  const body = req.body;
   
-  // Log para depuración
-  console.log(`=== Acceso a ruta con prefijo /${req.prefixId}${req.path} ===`);
-  
-  // Condicional para manejar rutas específicas
-  if (req.path === '/iclock/cdata' && req.method === 'GET') {
-    return zkTecoHandlers.handleInitialization(req, res, req.prefixId);
-  } 
-  else if (req.path === '/iclock/cdata' && req.method === 'POST') {
-    return zkTecoHandlers.handleDataUpload(req, res, req.prefixId);
-  } 
-  else if (req.path === '/iclock/getrequest' && req.method === 'GET') {
-    return zkTecoHandlers.handleGetRequest(req, res, req.prefixId);
-  }
-  else if (req.path === '' || req.path === '/') {
-    // Para la ruta directa al ID (ej: /41038)
-    logEvent('PARAMETRO', 'RECEPCION_DIRECTA', {
-      id: req.prefixId,
-      method: req.method,
-      query: req.query,
-      body: typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString(),
-      receivedAt: new Date()
-    });
-    return res.status(200).send('OK');
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
   }
   
-  // Si no coincide con las rutas específicas, pasamos a la siguiente ruta
-  // que capturará cualquier otra solicitud con este prefijo
-  next();
+  console.log(`=== POST recibido en /41038/iclock/cdata ===`);
+  
+  // Actualizar última vez visto
+  if (devices[SN]) {
+    devices[SN].lastSeen = new Date();
+  }
+  
+  // Procesar según el tipo de tabla
+  switch (table) {
+    case 'ATTLOG':
+      // Datos de marcación de asistencia
+      processAttendanceData(SN, body);
+      res.status(200).send(`OK: ${body.trim().split('\n').length}`);
+      break;
+      
+    case 'OPERLOG':
+      // Datos de operaciones
+      logEvent(SN, 'OPERACION', { data: body });
+      res.status(200).send('OK: 1');
+      break;
+      
+    case 'options':
+      // Datos de configuración del dispositivo
+      processOptions(SN, body);
+      res.status(200).send('OK');
+      break;
+      
+    default:
+      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body });
+      res.status(200).send('OK');
+  }
 });
 
-// Ruta para capturar cualquier otra solicitud con prefijo numérico
-app.all('/:id([0-9]+)/*', (req, res) => {
-  const id = req.params.id;
-  const path = req.path;
+// Ruta para obtener comandos con prefijo 41038
+app.get('/41038/iclock/getrequest', (req, res) => {
+  const { SN } = req.query;
+  
+  if (!SN) {
+    return res.status(400).send('Error: SN no proporcionado');
+  }
+  
+  console.log(`=== Solicitud de comando recibida en /41038/iclock/getrequest ===`);
+  
+  // Actualizar última vez visto
+  if (devices[SN]) {
+    devices[SN].lastSeen = new Date();
+  }
+  
+  logEvent(SN, 'SOLICITUD_COMANDO', {});
+  
+  // Por defecto, no enviamos comandos
+  res.status(200).send('OK');
+});
+
+// Ruta para capturar el acceso directo a /41038
+app.all('/41038', (req, res) => {
   const method = req.method;
   const query = req.query;
+  let body = '';
   
-  logEvent('RUTA_DESCONOCIDA', 'RECEPCION', {
-    id,
-    path,
+  // Verificar si hay cuerpo en la solicitud
+  if (req.body) {
+    body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString();
+  }
+  
+  console.log(`=== Acceso directo a /41038 ===`);
+  
+  // Registrar en el log la información recibida
+  logEvent('ACCESO_DIRECTO', '41038', {
     method,
     query,
-    body: typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString(),
+    body,
+    headers: req.headers,
     receivedAt: new Date()
   });
   
-  // Log para depuración
-  console.log(`=== Solicitud no manejada: ${method} /${id}${path} ===`);
+  // Responder simplemente con OK
+  res.status(200).send('OK');
+});
+
+// Ruta para capturar cualquier otra solicitud en /41038
+app.all('/41038/*', (req, res) => {
+  const path = req.path;
+  const method = req.method;
+  const query = req.query;
+  let body = '';
+  
+  // Verificar si hay cuerpo en la solicitud
+  if (req.body) {
+    body = typeof req.body === 'object' ? JSON.stringify(req.body) : req.body.toString();
+  }
+  
+  console.log(`=== Solicitud no manejada específicamente: ${method} ${path} ===`);
+  
+  // Registrar en el log la información recibida
+  logEvent('RUTA_ADICIONAL', '41038', {
+    path,
+    method,
+    query,
+    body,
+    headers: req.headers,
+    receivedAt: new Date()
+  });
   
   // Responder con OK para no generar errores
   res.status(200).send('OK');
@@ -328,19 +302,14 @@ app.all('/:id([0-9]+)/*', (req, res) => {
 app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
-  console.log('  Endpoints originales:');
-  console.log('  - GET  /                  : Página principal');
-  console.log('  - GET  /info              : Información del servidor');
-  console.log('  - GET  /records           : Ver registros de asistencia');
-  console.log('  - GET  /iclock/cdata      : Inicialización de dispositivo');
-  console.log('  - POST /iclock/cdata      : Subir registros de asistencia');
-  console.log('  - GET  /iclock/getrequest : Obtener comandos');
-  console.log('');
-  console.log('  Endpoints con prefijo numérico (ej: /41038):');
-  console.log('  - GET  /:id/iclock/cdata      : Inicialización con prefijo');
-  console.log('  - POST /:id/iclock/cdata      : Subir registros con prefijo');
-  console.log('  - GET  /:id/iclock/getrequest : Obtener comandos con prefijo');
-  console.log('  - ANY  /:id                   : Recepción directa con ID');
-  console.log('  - ANY  /:id/*                 : Cualquier otra ruta con prefijo');
+  console.log('  Endpoints disponibles:');
+  console.log('  - GET  /                         : Página principal');
+  console.log('  - GET  /info                     : Información del servidor');
+  console.log('  - GET  /records                  : Ver registros de asistencia');
+  console.log('  - GET  /41038/iclock/cdata       : Inicialización de dispositivo');
+  console.log('  - POST /41038/iclock/cdata       : Subir registros de asistencia');
+  console.log('  - GET  /41038/iclock/getrequest  : Obtener comandos');
+  console.log('  - ANY  /41038                    : Acceso directo');
+  console.log('  - ANY  /41038/*                  : Cualquier otra ruta');
   console.log('=================================================');
 });
