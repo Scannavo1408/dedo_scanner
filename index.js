@@ -27,8 +27,16 @@ const logEvent = (deviceSN, eventType, details) => {
   console.log(`[${timestamp}] [${deviceSN}] [${eventType}] ${JSON.stringify(details, null, 2)}`);
 };
 
+// Middleware para capturar el parámetro de licencia
+app.use('/:licencia?', (req, res, next) => {
+  req.licenciaParam = req.params.licencia || 'sin_licencia';
+  // Solo registrar el parámetro de licencia en el log
+  console.log(`[${formatDate()}] [LICENCIA] Acceso con licencia: ${req.licenciaParam}`);
+  next();
+});
+
 // Ruta raíz para verificar que el servidor está en línea
-app.get('/', (req, res) => {
+app.get('/:licencia?', (req, res) => {
   res.send(`
     <html>
       <head>
@@ -38,6 +46,7 @@ app.get('/', (req, res) => {
           h1 { color: #333; }
           .container { max-width: 800px; margin: 0 auto; }
           .status { background-color: #dff0d8; padding: 15px; border-radius: 4px; }
+          .licencia { background-color: #d9edf7; padding: 15px; border-radius: 4px; margin-top: 20px; }
           ul { margin-top: 20px; }
         </style>
       </head>
@@ -50,10 +59,14 @@ app.get('/', (req, res) => {
             <p>Dispositivos conectados: ${Object.keys(devices).length}</p>
             <p>Marcajes registrados: ${attendanceRecords.length}</p>
           </div>
+          <div class="licencia">
+            <h2>Parámetro de Licencia</h2>
+            <p>Licencia: ${req.licenciaParam}</p>
+          </div>
           <h2>Endpoints disponibles:</h2>
           <ul>
-            <li><a href="/info">/info</a> - Información del servidor</li>
-            <li><a href="/records">/records</a> - Ver registros de asistencia</li>
+            <li><a href="/${req.licenciaParam}/info">/info</a> - Información del servidor</li>
+            <li><a href="/${req.licenciaParam}/records">/records</a> - Ver registros de asistencia</li>
           </ul>
         </div>
       </body>
@@ -62,7 +75,8 @@ app.get('/', (req, res) => {
 });
 
 // Ruta para inicialización del dispositivo
-app.get('/iclock/cdata', (req, res) => {
+app.get('/:licencia?/iclock/cdata', (req, res) => {
+  const licenciaParam = req.licenciaParam;
   const { SN, options, pushver, language } = req.query;
   
   if (!SN) {
@@ -73,9 +87,13 @@ app.get('/iclock/cdata', (req, res) => {
   if (!devices[SN]) {
     devices[SN] = {
       lastSeen: new Date(),
-      info: {}
+      info: {},
+      licencia: licenciaParam // Solo almacenar el valor del parámetro
     };
-    logEvent(SN, 'REGISTRO', { firstConnection: true });
+    logEvent(SN, 'REGISTRO', { 
+      firstConnection: true, 
+      licencia: licenciaParam // Incluir en el log
+    });
   }
   
   // Actualizar última vez visto
@@ -85,7 +103,8 @@ app.get('/iclock/cdata', (req, res) => {
   logEvent(SN, 'INICIALIZACION', { 
     pushver, 
     language, 
-    options 
+    options,
+    licencia: licenciaParam // Incluir en el log
   });
   
   // Respuesta según el protocolo PUSH
@@ -108,7 +127,8 @@ PushProtVer=2.4.2`;
 });
 
 // Ruta para subir registros de asistencia
-app.post('/iclock/cdata', (req, res) => {
+app.post('/:licencia?/iclock/cdata', (req, res) => {
+  const licenciaParam = req.licenciaParam;
   const { SN, table, Stamp } = req.query;
   const body = req.body;
   
@@ -125,30 +145,31 @@ app.post('/iclock/cdata', (req, res) => {
   switch (table) {
     case 'ATTLOG':
       // Datos de marcación de asistencia
-      processAttendanceData(SN, body);
+      processAttendanceData(SN, body, licenciaParam);
       res.status(200).send(`OK: ${body.trim().split('\n').length}`);
       break;
       
     case 'OPERLOG':
       // Datos de operaciones
-      logEvent(SN, 'OPERACION', { data: body });
+      logEvent(SN, 'OPERACION', { data: body, licencia: licenciaParam });
       res.status(200).send('OK: 1');
       break;
       
     case 'options':
       // Datos de configuración del dispositivo
-      processOptions(SN, body);
+      processOptions(SN, body, licenciaParam);
       res.status(200).send('OK');
       break;
       
     default:
-      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body });
+      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, licencia: licenciaParam });
       res.status(200).send('OK');
   }
 });
 
 // Ruta para obtener comandos
-app.get('/iclock/getrequest', (req, res) => {
+app.get('/:licencia?/iclock/getrequest', (req, res) => {
+  const licenciaParam = req.licenciaParam;
   const { SN } = req.query;
   
   if (!SN) {
@@ -160,31 +181,35 @@ app.get('/iclock/getrequest', (req, res) => {
     devices[SN].lastSeen = new Date();
   }
   
-  logEvent(SN, 'SOLICITUD_COMANDO', {});
+  logEvent(SN, 'SOLICITUD_COMANDO', { licencia: licenciaParam });
   
   // Por defecto, no enviamos comandos
   res.status(200).send('OK');
 });
 
 // Ruta de información
-app.get('/info', (req, res) => {
+app.get('/:licencia?/info', (req, res) => {
+  const licenciaParam = req.licenciaParam;
+  
   const info = {
     devices: Object.keys(devices),
     totalDevices: Object.keys(devices).length,
     totalAttendanceRecords: attendanceRecords.length,
-    serverTime: new Date()
+    serverTime: new Date(),
+    licenciaParam: licenciaParam // Incluir el parámetro de licencia en la información
   };
   
   res.json(info);
 });
 
 // Ruta de registros
-app.get('/records', (req, res) => {
+app.get('/:licencia?/records', (req, res) => {
+  // No filtramos por licencia, solo devolvemos todos los registros
   res.json(attendanceRecords);
 });
 
 // Función para procesar datos de asistencia
-function processAttendanceData(deviceSN, data) {
+function processAttendanceData(deviceSN, data, licencia) {
   const records = data.trim().split('\n');
   
   records.forEach(record => {
@@ -201,7 +226,8 @@ function processAttendanceData(deviceSN, data) {
         verify,
         workcode,
         additionalData: rest,
-        receivedAt: new Date()
+        receivedAt: new Date(),
+        licencia // Guardar la licencia con el registro
       };
       
       // Almacenar registro
@@ -218,7 +244,7 @@ function processAttendanceData(deviceSN, data) {
 }
 
 // Función para procesar opciones del dispositivo
-function processOptions(deviceSN, data) {
+function processOptions(deviceSN, data, licencia) {
   const options = {};
   const items = data.split(',');
   
@@ -234,7 +260,8 @@ function processOptions(deviceSN, data) {
     devices[deviceSN].options = { ...devices[deviceSN].options, ...options };
   }
   
-  logEvent(deviceSN, 'CONFIGURACION', options);
+  // Incluir la licencia en el log
+  logEvent(deviceSN, 'CONFIGURACION', { ...options, licencia });
 }
 
 // Inicio del servidor
@@ -242,8 +269,8 @@ app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
   console.log('  Endpoints disponibles:');
-  console.log('  - GET  /       : Página principal');
-  console.log('  - GET  /info   : Información del servidor');
-  console.log('  - GET  /records: Ver registros de asistencia');
+  console.log('  - GET  /:licencia       : Página principal');
+  console.log('  - GET  /:licencia/info   : Información del servidor');
+  console.log('  - GET  /:licencia/records: Ver registros de asistencia');
   console.log('=================================================');
 });
