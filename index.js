@@ -61,16 +61,8 @@ app.get('/', (req, res) => {
   `);
 });
 
-/**
- * RUTA GET con parámetro de licencia
- * Ejemplo de llamada: GET /iclock/cdata/12345?SN=ZKSerial&options=...&pushver=...&language=...
- */
-app.get(':license/iclock/cdata', (req, res) => {
-  // Obtenemos la licencia desde la URL
-  const { license } = req.params;
-  console.log(`Licencia recibida: ${license}`);
-
-  // Obtenemos el resto de parámetros de la query
+// Ruta para inicialización del dispositivo
+app.get('/iclock/cdata', (req, res) => {
   const { SN, options, pushver, language } = req.query;
   
   if (!SN) {
@@ -115,15 +107,8 @@ PushProtVer=2.4.2`;
   res.status(200).send(response);
 });
 
-/**
- * RUTA POST con parámetro de licencia
- * Ejemplo de llamada: POST /iclock/cdata/12345?SN=ZKSerial&table=ATTLOG&Stamp=...
- */
-app.post(':license/iclock/cdata', (req, res) => {
-  // Obtenemos la licencia desde la URL
-  const { license } = req.params;
-  console.log(`Licencia recibida: ${license}`);
-
+// Ruta para subir registros de asistencia
+app.post('/iclock/cdata', (req, res) => {
   const { SN, table, Stamp } = req.query;
   const body = req.body;
   
@@ -162,7 +147,7 @@ app.post(':license/iclock/cdata', (req, res) => {
   }
 });
 
-// Ruta para obtener comandos (se deja igual que antes, sin licencia)
+// Ruta para obtener comandos
 app.get('/iclock/getrequest', (req, res) => {
   const { SN } = req.query;
   
@@ -170,11 +155,14 @@ app.get('/iclock/getrequest', (req, res) => {
     return res.status(400).send('Error: SN no proporcionado');
   }
   
+  // Actualizar última vez visto
   if (devices[SN]) {
     devices[SN].lastSeen = new Date();
   }
   
   logEvent(SN, 'SOLICITUD_COMANDO', {});
+  
+  // Por defecto, no enviamos comandos
   res.status(200).send('OK');
 });
 
@@ -186,6 +174,7 @@ app.get('/info', (req, res) => {
     totalAttendanceRecords: attendanceRecords.length,
     serverTime: new Date()
   };
+  
   res.json(info);
 });
 
@@ -253,10 +242,8 @@ app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
   console.log('  Endpoints disponibles:');
-  console.log('  - GET  /                    : Página principal');
-  console.log('  - GET  /info                : Información del servidor');
-  console.log('  - GET  /records             : Ver registros de asistencia');
-  console.log('  - GET  :license/iclock/cdata   : Inicialización con licencia');
-  console.log('  - POST :license/iclock/cdata  : Subir registros con licencia');
+  console.log('  - GET  /       : Página principal');
+  console.log('  - GET  /info   : Información del servidor');
+  console.log('  - GET  /records: Ver registros de asistencia');
   console.log('=================================================');
 });
