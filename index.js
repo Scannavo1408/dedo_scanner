@@ -28,7 +28,7 @@ const logEvent = (deviceSN, eventType, details) => {
 };
 
 // Función para procesar datos de asistencia
-function processAttendanceData(deviceSN, data, customId = null) {
+function processAttendanceData(deviceSN, data, idNumber = null) {
   const records = data.trim().split('\n');
   
   records.forEach(record => {
@@ -46,7 +46,7 @@ function processAttendanceData(deviceSN, data, customId = null) {
         workcode,
         additionalData: rest,
         receivedAt: new Date(),
-        customId: customId // Añadir el ID personalizado si existe
+        idNumber: idNumber // Incluir el ID numérico si existe
       };
       
       // Almacenar registro
@@ -63,7 +63,7 @@ function processAttendanceData(deviceSN, data, customId = null) {
 }
 
 // Función para procesar opciones del dispositivo
-function processOptions(deviceSN, data, customId = null) {
+function processOptions(deviceSN, data, idNumber = null) {
   const options = {};
   const items = data.split(',');
   
@@ -74,9 +74,9 @@ function processOptions(deviceSN, data, customId = null) {
     }
   });
   
-  // Añadir el ID personalizado si existe
-  if (customId) {
-    options.customId = customId;
+  // Incluir el ID numérico si existe
+  if (idNumber) {
+    options.idNumber = idNumber;
   }
   
   // Guardar las opciones en el dispositivo
@@ -86,58 +86,6 @@ function processOptions(deviceSN, data, customId = null) {
   
   logEvent(deviceSN, 'CONFIGURACION', options);
 }
-
-// MIDDLEWARE PARA EXTRAER ID PERSONALIZADO
-// Este middleware extrae un ID personalizado de diferentes fuentes en la solicitud
-app.use((req, res, next) => {
-  // Intentar obtener ID personalizado de diferentes fuentes
-  let customId = null;
-  
-  // 1. Verificar si hay un ID en la ruta (ejemplo: /41038/iclock/...)
-  const pathSegments = req.path.split('/').filter(segment => segment);
-  if (pathSegments.length > 0 && !isNaN(pathSegments[0])) {
-    customId = pathSegments[0];
-  }
-  
-  // 2. Verificar si hay un parámetro id en la consulta (ejemplo: ?id=41038)
-  if (req.query.id && !isNaN(req.query.id)) {
-    customId = req.query.id;
-  }
-  
-  // 3. Verificar si hay un parámetro customId en la consulta (ejemplo: ?customId=41038)
-  if (req.query.customId && !isNaN(req.query.customId)) {
-    customId = req.query.customId;
-  }
-  
-  // Guardar el ID personalizado en el objeto de solicitud para usarlo en las rutas
-  if (customId) {
-    req.customId = customId;
-    console.log(`=== ID personalizado detectado: ${customId} ===`);
-  }
-  
-  // Si la ruta comienza con un número, redireccionar a la ruta base correspondiente
-  if (pathSegments.length > 0 && !isNaN(pathSegments[0])) {
-    // Construir la nueva ruta sin el ID numérico al principio
-    const newPath = '/' + pathSegments.slice(1).join('/');
-    
-    // Preservar todos los parámetros de consulta originales y añadir el customId
-    const queryParams = { ...req.query, customId: pathSegments[0] };
-    
-    // Construir la cadena de consulta
-    const queryString = Object.keys(queryParams)
-      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(queryParams[key])}`)
-      .join('&');
-    
-    // Redireccionar a la nueva URL
-    const redirectUrl = newPath + (queryString ? `?${queryString}` : '');
-    
-    console.log(`=== Redireccionando de ${req.originalUrl} a ${redirectUrl} ===`);
-    
-    return res.redirect(307, redirectUrl);  // 307 mantiene el método HTTP original
-  }
-  
-  next();
-});
 
 // Ruta raíz para verificar que el servidor está en línea
 app.get('/', (req, res) => {
@@ -166,10 +114,8 @@ app.get('/', (req, res) => {
           <ul>
             <li><a href="/info">/info</a> - Información del servidor</li>
             <li><a href="/records">/records</a> - Ver registros de asistencia</li>
-            <li><strong>/iclock/cdata</strong> - Inicialización del dispositivo</li>
-            <li><strong>/iclock/getrequest</strong> - Solicitar comandos</li>
+            <li><strong>/:id</strong> - Cualquier ID numérico como punto de entrada</li>
           </ul>
-          <p>Nota: El servidor redirecciona automáticamente las rutas con prefijo numérico (ej: /41038/iclock/...) a las rutas base correspondientes.</p>
         </div>
       </body>
     </html>
@@ -182,8 +128,7 @@ app.get('/info', (req, res) => {
     devices: Object.keys(devices),
     totalDevices: Object.keys(devices).length,
     totalAttendanceRecords: attendanceRecords.length,
-    serverTime: new Date(),
-    customId: req.customId || null
+    serverTime: new Date()
   };
   
   res.json(info);
@@ -191,51 +136,86 @@ app.get('/info', (req, res) => {
 
 // Ruta de registros
 app.get('/records', (req, res) => {
-  const filteredRecords = req.customId 
-    ? attendanceRecords.filter(record => record.customId === req.customId)
-    : attendanceRecords;
-  
+  res.json(attendanceRecords);
+});
+
+// Filtrar registros por ID
+app.get('/records/:id', (req, res) => {
+  const idNumber = req.params.id;
+  const filteredRecords = attendanceRecords.filter(record => record.idNumber === idNumber);
   res.json(filteredRecords);
 });
 
-// RUTAS ZKTECO FUNCIONANDO EN LAS RUTAS BASE
-// Ruta para inicialización del dispositivo
-app.get('/iclock/cdata', (req, res) => {
-  const { SN, options, pushver, language } = req.query;
-  const customId = req.customId;
+// CAPTURAR CUALQUIER RUTA QUE SEA UN NÚMERO
+// Esta ruta captura cualquier solicitud a una ruta que sea solo un número (ej: /41038, /12345)
+app.all('/:id([0-9]+)', (req, res) => {
+  const idNumber = req.params.id;
+  const method = req.method;
+  const { SN, table, Stamp, options, pushver, language } = req.query;
+  const body = req.body;
   
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
+  console.log(`=== Solicitud recibida en /${idNumber}: ${method} ===`);
+  console.log(`Parámetros: ${JSON.stringify(req.query)}`);
+  
+  // Si hay un INFO en la consulta, probablemente es una solicitud getrequest
+  if (req.query.INFO) {
+    console.log(`=== Detectada solicitud getrequest en /${idNumber} ===`);
+    
+    if (!SN) {
+      return res.status(400).send('Error: SN no proporcionado');
+    }
+    
+    // Actualizar última vez visto
+    if (devices[SN]) {
+      devices[SN].lastSeen = new Date();
+      devices[SN].idNumber = idNumber; // Guardar el ID numérico
+    } else {
+      // Registrar dispositivo si es nuevo
+      devices[SN] = {
+        lastSeen: new Date(),
+        info: {},
+        idNumber: idNumber
+      };
+    }
+    
+    logEvent(SN, 'SOLICITUD_COMANDO', {
+      INFO: req.query.INFO,
+      endpoint: `/${idNumber}`
+    });
+    
+    // Responder con OK
+    return res.status(200).send('OK');
   }
-
-  console.log(`=== Inicialización recibida ${customId ? `con ID: ${customId}` : ''} ===`);
-
-  // Registrar dispositivo si es nuevo
-  if (!devices[SN]) {
-    devices[SN] = {
-      lastSeen: new Date(),
-      info: {},
-      customId: customId
-    };
-    logEvent(SN, 'REGISTRO', { firstConnection: true, customId });
-  } else if (customId) {
-    // Actualizar ID personalizado si existe
-    devices[SN].customId = customId;
-  }
   
-  // Actualizar última vez visto
-  devices[SN].lastSeen = new Date();
-  
-  // Log de la inicialización
-  logEvent(SN, 'INICIALIZACION', { 
-    pushver, 
-    language, 
-    options,
-    customId
-  });
-  
-  // Respuesta según el protocolo PUSH
-  const response = `GET OPTION FROM: ${SN}
+  // Si el método es GET y tiene SN, probablemente es una inicialización
+  if (method === 'GET' && SN) {
+    console.log(`=== Detectada solicitud de inicialización en /${idNumber} ===`);
+    
+    // Registrar dispositivo si es nuevo
+    if (!devices[SN]) {
+      devices[SN] = {
+        lastSeen: new Date(),
+        info: {},
+        idNumber: idNumber
+      };
+      logEvent(SN, 'REGISTRO', { firstConnection: true, endpoint: `/${idNumber}` });
+    } else {
+      devices[SN].idNumber = idNumber; // Actualizar el ID numérico
+    }
+    
+    // Actualizar última vez visto
+    devices[SN].lastSeen = new Date();
+    
+    // Log de la inicialización
+    logEvent(SN, 'INICIALIZACION', { 
+      pushver, 
+      language, 
+      options,
+      endpoint: `/${idNumber}`
+    });
+    
+    // Respuesta según el protocolo PUSH
+    const response = `GET OPTION FROM: ${SN}
 ATTLOGStamp=None
 OPERLOGStamp=9999
 ATTPHOTOStamp=None
@@ -250,79 +230,241 @@ Encrypt=None
 ServerVer=2.4.2
 PushProtVer=2.4.2`;
 
-  res.status(200).send(response);
+    return res.status(200).send(response);
+  }
+  
+  // Si el método es POST, probablemente es una subida de datos
+  if (method === 'POST' && SN) {
+    console.log(`=== Detectada subida de datos en /${idNumber} ===`);
+    
+    // Actualizar última vez visto
+    if (devices[SN]) {
+      devices[SN].lastSeen = new Date();
+      devices[SN].idNumber = idNumber; // Actualizar el ID numérico
+    }
+    
+    // Si hay tabla, procesar según el tipo
+    if (table) {
+      switch (table) {
+        case 'ATTLOG':
+          // Datos de marcación de asistencia
+          processAttendanceData(SN, body, idNumber);
+          return res.status(200).send(`OK: ${body.trim().split('\n').length}`);
+          
+        case 'OPERLOG':
+          // Datos de operaciones
+          logEvent(SN, 'OPERACION', { data: body, endpoint: `/${idNumber}` });
+          return res.status(200).send('OK: 1');
+          
+        case 'options':
+          // Datos de configuración del dispositivo
+          processOptions(SN, body, idNumber);
+          return res.status(200).send('OK');
+          
+        default:
+          logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, endpoint: `/${idNumber}` });
+          return res.status(200).send('OK');
+      }
+    }
+  }
+  
+  // Para cualquier otra solicitud a /:id
+  logEvent('SOLICITUD_GENERICA', idNumber, {
+    method,
+    query: req.query,
+    body: typeof body === 'object' ? JSON.stringify(body) : body ? body.toString() : '',
+    headers: req.headers,
+    receivedAt: new Date()
+  });
+  
+  // Responder siempre con OK para evitar errores
+  res.status(200).send('OK');
 });
 
-// Ruta para subir registros de asistencia
-app.post('/iclock/cdata', (req, res) => {
-  const { SN, table, Stamp } = req.query;
-  const customId = req.customId;
+// CAPTURAR CUALQUIER RUTA QUE COMIENCE CON UN NÚMERO SEGUIDO DE /iclock/
+// Esta ruta captura solicitudes como /41038/iclock/cdata o /41038/iclock/getrequest
+app.all('/:id([0-9]+)/iclock/:endpoint', (req, res) => {
+  const idNumber = req.params.id;
+  const endpoint = req.params.endpoint;
+  const method = req.method;
+  const { SN, table, Stamp, options, pushver, language } = req.query;
   const body = req.body;
   
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
-  }
+  console.log(`=== Solicitud recibida en /${idNumber}/iclock/${endpoint}: ${method} ===`);
   
-  console.log(`=== POST recibido ${customId ? `con ID: ${customId}` : ''} ===`);
-  
-  // Actualizar última vez visto
-  if (devices[SN]) {
-    devices[SN].lastSeen = new Date();
-    // Actualizar ID personalizado si existe
-    if (customId) {
-      devices[SN].customId = customId;
+  // Manejar según el endpoint
+  if (endpoint === 'cdata') {
+    if (method === 'GET') {
+      // Inicialización del dispositivo
+      if (!SN) {
+        return res.status(400).send('Error: SN no proporcionado');
+      }
+      
+      // Registrar dispositivo si es nuevo
+      if (!devices[SN]) {
+        devices[SN] = {
+          lastSeen: new Date(),
+          info: {},
+          idNumber: idNumber
+        };
+        logEvent(SN, 'REGISTRO', { firstConnection: true, endpoint: `/${idNumber}/iclock/cdata` });
+      } else {
+        devices[SN].idNumber = idNumber; // Actualizar el ID numérico
+      }
+      
+      // Actualizar última vez visto
+      devices[SN].lastSeen = new Date();
+      
+      // Log de la inicialización
+      logEvent(SN, 'INICIALIZACION', { 
+        pushver, 
+        language, 
+        options,
+        endpoint: `/${idNumber}/iclock/cdata`
+      });
+      
+      // Respuesta según el protocolo PUSH
+      const response = `GET OPTION FROM: ${SN}
+ATTLOGStamp=None
+OPERLOGStamp=9999
+ATTPHOTOStamp=None
+ErrorDelay=30
+Delay=10
+TransTimes=00:00;14:05
+TransInterval=1
+TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP UserPic
+TimeZone=8
+Realtime=1
+Encrypt=None
+ServerVer=2.4.2
+PushProtVer=2.4.2`;
+
+      return res.status(200).send(response);
+    } 
+    else if (method === 'POST') {
+      // Subir datos
+      if (!SN) {
+        return res.status(400).send('Error: SN no proporcionado');
+      }
+      
+      // Actualizar última vez visto
+      if (devices[SN]) {
+        devices[SN].lastSeen = new Date();
+        devices[SN].idNumber = idNumber; // Actualizar el ID numérico
+      }
+      
+      // Procesar según el tipo de tabla
+      switch (table) {
+        case 'ATTLOG':
+          // Datos de marcación de asistencia
+          processAttendanceData(SN, body, idNumber);
+          return res.status(200).send(`OK: ${body.trim().split('\n').length}`);
+          
+        case 'OPERLOG':
+          // Datos de operaciones
+          logEvent(SN, 'OPERACION', { data: body, endpoint: `/${idNumber}/iclock/cdata` });
+          return res.status(200).send('OK: 1');
+          
+        case 'options':
+          // Datos de configuración del dispositivo
+          processOptions(SN, body, idNumber);
+          return res.status(200).send('OK');
+          
+        default:
+          logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, endpoint: `/${idNumber}/iclock/cdata` });
+          return res.status(200).send('OK');
+      }
     }
+  } 
+  else if (endpoint === 'getrequest') {
+    // Solicitud de comandos
+    if (!SN) {
+      return res.status(400).send('Error: SN no proporcionado');
+    }
+    
+    // Actualizar última vez visto
+    if (devices[SN]) {
+      devices[SN].lastSeen = new Date();
+      devices[SN].idNumber = idNumber; // Actualizar el ID numérico
+    }
+    
+    logEvent(SN, 'SOLICITUD_COMANDO', { 
+      endpoint: `/${idNumber}/iclock/getrequest`,
+      INFO: req.query.INFO
+    });
+    
+    // Por defecto, no enviamos comandos
+    return res.status(200).send('OK');
   }
   
-  // Procesar según el tipo de tabla
-  switch (table) {
-    case 'ATTLOG':
-      // Datos de marcación de asistencia
-      processAttendanceData(SN, body, customId);
-      res.status(200).send(`OK: ${body.trim().split('\n').length}`);
-      break;
-      
-    case 'OPERLOG':
-      // Datos de operaciones
-      logEvent(SN, 'OPERACION', { data: body, customId });
-      res.status(200).send('OK: 1');
-      break;
-      
-    case 'options':
-      // Datos de configuración del dispositivo
-      processOptions(SN, body, customId);
-      res.status(200).send('OK');
-      break;
-      
-    default:
-      logEvent(SN, 'DATOS_DESCONOCIDOS', { table, body, customId });
-      res.status(200).send('OK');
-  }
+  // Para cualquier otro endpoint en /iclock/
+  logEvent('RUTA_ICLOCK', idNumber, {
+    endpoint: `/${idNumber}/iclock/${endpoint}`,
+    method,
+    query: req.query,
+    body: typeof body === 'object' ? JSON.stringify(body) : body ? body.toString() : '',
+    receivedAt: new Date()
+  });
+  
+  // Responder siempre con OK para evitar errores
+  res.status(200).send('OK');
 });
 
-// Ruta para obtener comandos
-app.get('/iclock/getrequest', (req, res) => {
-  const { SN } = req.query;
-  const customId = req.customId;
+// RUTA COMODÍN PARA CAPTURAR TODAS LAS SOLICITUDES NO MANEJADAS
+// Esta ruta captura cualquier solicitud a cualquier ruta que no haya sido manejada por las rutas anteriores
+app.use('*', (req, res) => {
+  console.log(`=== Solicitud no manejada: ${req.method} ${req.originalUrl} ===`);
   
-  if (!SN) {
-    return res.status(400).send('Error: SN no proporcionado');
-  }
+  // Si la ruta contiene números, intentar extraerlos
+  const match = req.originalUrl.match(/\/(\d+)/);
+  const idNumber = match ? match[1] : null;
   
-  console.log(`=== Solicitud de comando recibida ${customId ? `con ID: ${customId}` : ''} ===`);
-  
-  // Actualizar última vez visto
-  if (devices[SN]) {
-    devices[SN].lastSeen = new Date();
-    // Actualizar ID personalizado si existe
-    if (customId) {
-      devices[SN].customId = customId;
+  if (idNumber && req.originalUrl.includes('iclock')) {
+    console.log(`=== Intento de manejar ruta con número ${idNumber} y 'iclock' ===`);
+    
+    // Extraer SN de los parámetros de consulta
+    const SN = req.query.SN;
+    
+    if (SN) {
+      if (req.originalUrl.includes('getrequest')) {
+        logEvent(SN, 'SOLICITUD_COMANDO_COMODIN', { 
+          url: req.originalUrl,
+          idNumber
+        });
+        return res.status(200).send('OK');
+      }
+      
+      if (req.method === 'GET' && req.originalUrl.includes('cdata')) {
+        // Respuesta para inicialización
+        const response = `GET OPTION FROM: ${SN}
+ATTLOGStamp=None
+OPERLOGStamp=9999
+ATTPHOTOStamp=None
+ErrorDelay=30
+Delay=10
+TransTimes=00:00;14:05
+TransInterval=1
+TransFlag=TransData AttLog OpLog AttPhoto EnrollUser ChgUser EnrollFP ChgFP UserPic
+TimeZone=8
+Realtime=1
+Encrypt=None
+ServerVer=2.4.2
+PushProtVer=2.4.2`;
+        
+        return res.status(200).send(response);
+      }
+      
+      if (req.method === 'POST' && req.originalUrl.includes('cdata')) {
+        // Para subidas de datos
+        return res.status(200).send('OK: 1');
+      }
     }
   }
   
-  logEvent(SN, 'SOLICITUD_COMANDO', { customId });
+  // Log de solicitud no manejada
+  console.log('Parámetros:', req.query);
   
-  // Por defecto, no enviamos comandos
+  // Responder con OK para evitar errores
   res.status(200).send('OK');
 });
 
@@ -331,15 +473,12 @@ app.listen(port, () => {
   console.log('=================================================');
   console.log(`  Servidor ZKTeco corriendo en puerto ${port}`);
   console.log('  Endpoints disponibles:');
-  console.log('  - GET  /                  : Página principal');
-  console.log('  - GET  /info              : Información del servidor');
-  console.log('  - GET  /records           : Ver registros de asistencia');
-  console.log('  - GET  /iclock/cdata      : Inicialización de dispositivo');
-  console.log('  - POST /iclock/cdata      : Subir registros de asistencia');
-  console.log('  - GET  /iclock/getrequest : Obtener comandos');
-  console.log('');
-  console.log('  IMPORTANTE: El servidor redirecciona automáticamente');
-  console.log('  las rutas con prefijo numérico (ej: /41038/iclock/...)');
-  console.log('  a las rutas base correspondientes (/iclock/...)');
+  console.log('  - GET  /                      : Página principal');
+  console.log('  - GET  /info                  : Información del servidor');
+  console.log('  - GET  /records               : Ver registros de asistencia');
+  console.log('  - GET  /records/:id           : Filtrar registros por ID');
+  console.log('  - ANY  /:id                   : Punto de entrada para cualquier ID numérico');
+  console.log('  - ANY  /:id/iclock/cdata      : Inicialización o subida con ID específico');
+  console.log('  - ANY  /:id/iclock/getrequest : Comandos con ID específico');
   console.log('=================================================');
 });
