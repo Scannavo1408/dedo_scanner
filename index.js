@@ -183,6 +183,13 @@ app.get('/records', (req, res) => {
   res.json(attendanceRecords);
 });
 
+// Ruta para capturar ID dinámico
+app.get('/:id', (req, res) => {
+  const id = req.params.id;
+  logEvent('SISTEMA', 'ID_CAPTURADO', { id });
+  res.send(`ID recibido: ${id}`);
+});
+
 // Función para procesar datos de asistencia
 function processAttendanceData(deviceSN, data) {
   const records = data.trim().split('\n');
